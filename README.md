@@ -13,3 +13,13 @@ Rust で書かれた Transformer (decoder-only) 言語モデルの学習・推�
 | ドキュメント | 内容 |
 |------------|------|
 | [docs/roadmap.md](docs/roadmap.md) | 今後の改善案 / ロードマップ |
+
+
+## ディレクトリ構成
+
+```
+src/
+├── kernel/     # Rust: wgpu のバッファ・パイプライン管理
+├── shader/     # WGSL: GPU 上で動く計算本体
+└── model/      # Transformer のブロック構成（kernel を組み合わせる）
+```
