@@ -9,9 +9,9 @@ fn doubleMe(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
 
     let array_length = arrayLength(&input);
-    if(global_id.x >= array_length) {
+    if(index >= array_length) {
         return;
     }
 
-    output[global_id.x] = input[global_id.x] * 2.0;
+    output[index] = input[index] * 2.0;
 }

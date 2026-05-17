@@ -19,7 +19,20 @@ Rust で書かれた Transformer (decoder-only) 言語モデルの学習・推�
 
 ```
 src/
-├── kernel/     # Rust: wgpu のバッファ・パイプライン管理
-├── shader/     # WGSL: GPU 上で動く計算本体
-└── model/      # Transformer のブロック構成（kernel を組み合わせる）
+|-- kernel/     # Rust: wgpu のバッファ・パイプライン管理
+|   |-- adam_w.rs
+|   |-- attention.rs
+|   |-- matmul.rs
+|   |-- mod.rs
+|   |-- rms_norm.rs
+|   `-- swiglu.rs
+|-- lib.rs
+|-- main.rs
+|-- model/      # Transformer のブロック構成（kernel を組み合わせる）
+|   |-- language_model.rs
+|   `-- mod.rs
+|-- shader/     # WGSL: GPU 上で動く計算本体
+|   |-- matmul.wgsl
+|   `-- shaders.wgsl
+`-- test_utils.rs
 ```
