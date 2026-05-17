@@ -4,7 +4,7 @@
 - wgpu で GPU カーネル (Vulkan/CUDA バックエンドに切替可能)
 - Matmul / Attention の GPU 化
 
-### G-1-1 プロジェクト骨格
+### G-1-1 プロジェクト骨格 ✅ 完了
 Cargo.toml（wgpu + bytemuck + pollster）、ディレクトリ構成（src/kernel/, src/shader/, src/model/）、GPU デバイス初期化の動作確認。
 
 | クレート     | 役割                                                                                  | いつ使う                 |

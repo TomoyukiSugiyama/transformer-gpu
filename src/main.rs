@@ -13,6 +13,18 @@ fn main() {
             .expect("Failed to create adapter");
     println!("Running on Adapter: {:#?}", adapter);
 
+    let limits = adapter.limits();
+    println!(
+        "max_workgroup_size x={} y={} z={}",
+        limits.max_compute_workgroup_size_x,
+        limits.max_compute_workgroup_size_y,
+        limits.max_compute_workgroup_size_z,
+    );
+    println!(
+        "max_workgroup_invocations={}",
+        limits.max_compute_invocations_per_workgroup
+    );
+    
     let downlevel_capabilities = adapter.get_downlevel_capabilities();
     if !downlevel_capabilities
         .flags
