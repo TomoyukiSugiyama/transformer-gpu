@@ -13,7 +13,7 @@ Cargo.toml（wgpu + bytemuck + pollster）、ディレクトリ構成（src/kern
 | bytemuck | Rust 構造体 → &[u8] 変換                                                                 | GPU バッファへのデータ転送時     |
 | pollster | async fn を同期的にブロック実行                                                                | デバイス初期化・GPU 結果の読み戻し時 |
 
-### G-1-2 Matmul カーネル
+### G-1-2 Matmul カーネル ✅ 完了
 WGSL で Tiled GEMM 実装、CPU 実装と数値一致確認、f32 / f16 両対応の検討。
 
 ### G-1-3 Attention カーネル
