@@ -132,10 +132,20 @@ mod tests {
     }
 
     #[test]
-    fn test_matmul_gpu_vs_cpu() {
-        let m = 64;
-        let k = 64;
-        let n = 64;
+    fn test_matmul_identity() {
+        let (device, queue) = gpu_context();
+        let (m, k, n) = (4, 4, 4);
+        let a: Vec<f32> = (0..16).map(|i| i as f32).collect();
+        let eye: Vec<f32> = (0..16)
+            .map(|i| if i / 4 == i % 4 { 1.0 } else { 0.0 })
+            .collect();
+        let gpu_out = matmul_gpu(&device, &queue, &a, &eye, m as u32, k as u32, n as u32);
+        assert_close(&gpu_out, &a, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_matmul_random() {
+        let (m, k, n) = (64, 64, 64);
         // ランダム入力（再現性のため固定シード）
         let a = random_f32(m * k, 42);
         let b = random_f32(k * n, 43);
@@ -145,5 +155,18 @@ mod tests {
         let gpu_out = matmul_gpu(&device, &queue, &a, &b, m as u32, k as u32, n as u32); // wgpu 経由
 
         assert_close(&gpu_out, &cpu_out, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_matmul_non_tile_boundary() {
+        let (m, k, n) = (32usize, 100usize, 17usize);
+        let a = random_f32(m * k, 1);
+        let b = random_f32(k * n, 2);
+
+        let cpu_out = matmul_cpu(&a, &b, m, k, n);
+        let (device, queue) = gpu_context();
+        let gpu_out = matmul_gpu(&device, &queue, &a, &b, m as u32, k as u32, n as u32); // wgpu 経由
+
+        assert_close(&gpu_out, &cpu_out, 1e-4, 1e-6);
     }
 }
