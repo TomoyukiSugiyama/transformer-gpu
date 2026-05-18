@@ -20,23 +20,23 @@ fn matmul(
     @builtin(local_invocation_id) lid: vec3<u32>,
     @builtin(workgroup_id) wid: vec3<u32>,
 ) {
-    let row = gid.x;
-    let col = gid.y;
+    let row = gid.y;
+    let col = gid.x;
 
     var acc: f32 = 0.0;
     let num_tiles = (dims.K + TILE - 1u) / TILE;
 
     for(var t: u32 = 0u; t < num_tiles; t++) {
-        let a_col = t * TILE + lid.y;
-        let b_row = t * TILE + lid.x;
+        let a_col = t * TILE + lid.x;
+        let b_row = t * TILE + lid.y;
 
-        tileA[lid.x][lid.y] = select(0.0, A[row * dims.K + a_col], row < dims.M && a_col < dims.K);
-        tileB[lid.x][lid.y] = select(0.0, B[b_row * dims.N + col], b_row < dims.K && col < dims.N);
+        tileA[lid.y][lid.x] = select(0.0, A[row * dims.K + a_col], row < dims.M && a_col < dims.K);
+        tileB[lid.y][lid.x] = select(0.0, B[b_row * dims.N + col], b_row < dims.K && col < dims.N);
 
         workgroupBarrier();
 
         for(var i: u32 = 0u; i < TILE; i++) {
-            acc += tileA[lid.x][i] * tileB[i][lid.y];
+            acc += tileA[lid.y][i] * tileB[i][lid.x];
         }
 
         workgroupBarrier();
