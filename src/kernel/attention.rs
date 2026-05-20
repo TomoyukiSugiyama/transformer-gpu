@@ -304,7 +304,7 @@ mod test {
         // score * v
         // | 0.0  1.0 |
         // | 0.5  1.0 |
-        let exp: Vec<f32> = vec![0.7071, 0.7071, 0.7071, 0.7071];
+        let exp: Vec<f32> = vec![0.7071, -1e9, 0.7071, 0.7071];
         assert!((&out[0] - &exp[0]).abs() < 1e-4);
         assert!((&out[1] - &exp[1]).abs() < 1e-4);
         assert!((&out[2] - &exp[2]).abs() < 1e-4);

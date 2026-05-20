@@ -27,7 +27,7 @@ fn attention(
     let num_tiles = (dims.d_head + TILE - 1u) / TILE;
     // 1 / √d_k
     let scale = 1.0 / sqrt(f32(dims.d_head));
-    // QK^T / √d_k
+    // QK^T / √d_k, casual mask
     for(var t: u32 = 0u; t < num_tiles; t++) {
         let q_col = t * TILE + lid.x;
         let k_row = t * TILE + lid.y;
@@ -46,6 +46,10 @@ fn attention(
     }
 
     if row < dims.seq && col < dims.d_head {
-        O[row * dims.seq + col] = acc * scale;
+        if col > row {
+            O[row * dims.seq + col] = -1e9;            
+        }else{
+            O[row * dims.seq + col] = acc * scale;
+        }
     }    
 }
