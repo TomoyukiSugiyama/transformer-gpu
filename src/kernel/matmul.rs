@@ -102,7 +102,8 @@ pub fn matmul_gpu(
 }
 
 // CPU リファレンス
-pub fn matmul_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+#[cfg(test)]
+fn matmul_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     let mut c = vec![0.0f32; m * n];
     for i in 0..m {
         for j in 0..n {

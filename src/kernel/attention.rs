@@ -2,7 +2,7 @@ use wgpu::util::DeviceExt;
 
 const TILE: u32 = 16;
 
-fn attention_gpu(
+pub fn attention_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     q: &[f32],
@@ -99,6 +99,57 @@ fn attention_gpu(
         ],
     });
 
+    let av_v = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("av_v"),
+        contents: bytemuck::cast_slice(&v),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+
+    let av_o = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("av_o"),
+        size: (seq * d_head * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let dims_padded: [u32; 4] = [seq, d_head, 0, 0];
+    let av_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("av_dims"),
+        contents: bytemuck::cast_slice(&dims_padded),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let av_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("attn_v"),
+        layout: None,
+        module: &module,
+        entry_point: Some("attn_v"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
+    });
+    let av_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &av_pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: score.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: av_v.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: av_o.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: av_dims.as_entire_binding(),
+            },
+        ],
+    });
+
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
@@ -114,16 +165,20 @@ fn attention_gpu(
 
         pass.set_pipeline(&sm_pipeline);
         pass.set_bind_group(0, &sm_bind_group, &[]);
-        pass.dispatch_workgroups(seq.div_ceil(TILE), 1, 1);
+        pass.dispatch_workgroups(seq.div_ceil(64), 1, 1);
+
+        pass.set_pipeline(&av_pipeline);
+        pass.set_bind_group(0, &av_bind_group, &[]);
+        pass.dispatch_workgroups(d_head.div_ceil(TILE), seq.div_ceil(TILE), 1);
     }
 
     let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: (seq * seq * 4) as u64,
+        size: (seq * d_head * 4) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    encoder.copy_buffer_to_buffer(&score, 0, &buf_read, 0, (seq * d_head * 4) as u64);
+    encoder.copy_buffer_to_buffer(&av_o, 0, &buf_read, 0, (seq * d_head * 4) as u64);
     queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
@@ -134,7 +189,9 @@ fn attention_gpu(
     let data = slice.get_mapped_range();
     bytemuck::allocation::pod_collect_to_vec(&data)
 }
+
 // CPU リファレンス
+#[cfg(test)]
 fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize) -> Vec<f32> {
     // 1 / √d_k
     let scale = 1.0 / (d_head as f32).sqrt();
@@ -176,7 +233,7 @@ fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize) -> 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::random_f32;
+    use crate::test_utils::{assert_close, random_f32};
 
     fn gpu_context() -> (wgpu::Device, wgpu::Queue) {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -198,7 +255,9 @@ mod test {
         let k: Vec<f32> = vec![3.0];
         let v: Vec<f32> = vec![4.0];
 
-        let out = attention_cpu(&q, &k, &v, seq, d_head);
+        let cpu = attention_cpu(&q, &k, &v, seq, d_head);
+        let (device, queue) = gpu_context();
+        let gpu = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
 
         // 1 / √d_k
         // => 1.0 / √1 = 1.0
@@ -208,7 +267,9 @@ mod test {
         // => 1.0
         // score * V
         // => 1.0 * 4.0 = 4.0
-        assert!(out[0] - 4.0 < 1e-4);
+        assert!((cpu[0] - 4.0).abs() < 1e-4);
+        assert!((gpu[0] - 4.0).abs() < 1e-4);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 
     #[test]
@@ -218,7 +279,9 @@ mod test {
         let q: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0];
         let k: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0];
         let v: Vec<f32> = vec![0.0, 1.0, 1.0, 1.0];
-        let out = attention_cpu(&q, &k, &v, seq, d_head);
+        let cpu = attention_cpu(&q, &k, &v, seq, d_head);
+        let (device, queue) = gpu_context();
+        let gpu = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
 
         // q            k           v
         // | 1.0 0.0 | | 1.0 1.0 | | 0.0 1.0 |
@@ -243,22 +306,52 @@ mod test {
         // | 0.0  1.0 |
         // | 0.5  1.0 |
         let exp: Vec<f32> = vec![0.0, 1.0, 0.5, 1.0];
-        assert!((&out[0] - &exp[0]).abs() < 1e-4);
-        assert!((&out[1] - &exp[1]).abs() < 1e-4);
-        assert!((&out[2] - &exp[2]).abs() < 1e-4);
-        assert!((&out[3] - &exp[3]).abs() < 1e-4);
+        assert!((&cpu[0] - &exp[0]).abs() < 1e-4);
+        assert!((&cpu[1] - &exp[1]).abs() < 1e-4);
+        assert!((&cpu[2] - &exp[2]).abs() < 1e-4);
+        assert!((&cpu[3] - &exp[3]).abs() < 1e-4);
+        let exp: Vec<f32> = vec![0.0, 1.0, 0.5, 1.0];
+        assert!(
+            (&gpu[0] - &exp[0]).abs() < 1e-4,
+            "out[0] = {}, exp[0] = {}",
+            gpu[0],
+            exp[0]
+        );
+        assert!(
+            (&gpu[1] - &exp[1]).abs() < 1e-4,
+            "out[1] = {}, exp[1] = {}",
+            gpu[1],
+            exp[1]
+        );
+        assert!(
+            (&gpu[2] - &exp[2]).abs() < 1e-4,
+            "out[2] = {}, exp[2] = {}",
+            gpu[2],
+            exp[2]
+        );
+        assert!(
+            (&gpu[3] - &exp[3]).abs() < 1e-4,
+            "out[3] = {}, exp[3] = {}",
+            gpu[3],
+            exp[3]
+        );
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 
     #[test]
-    fn test_attention_random_cpu_reference() {
+    fn test_attention_random() {
         let seq: usize = 1024;
         let d_head: usize = 64;
         let q: Vec<f32> = random_f32(seq * d_head, 32);
         let k: Vec<f32> = random_f32(seq * d_head, 33);
         let v: Vec<f32> = random_f32(seq * d_head, 34);
-        let out = attention_cpu(&q, &k, &v, seq, d_head);
+        let cpu = attention_cpu(&q, &k, &v, seq, d_head);
+        let (device, queue) = gpu_context();
+        let gpu = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
 
-        assert_eq!(out.len(), seq * d_head)
+        assert_eq!(cpu.len(), seq * d_head);
+        assert_eq!(gpu.len(), seq * d_head);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 
     #[test]
@@ -268,89 +361,12 @@ mod test {
         let q: Vec<f32> = random_f32(seq * d_head, 42);
         let k: Vec<f32> = random_f32(seq * d_head, 43);
         let v: Vec<f32> = random_f32(seq * d_head, 44);
-        let out = attention_cpu(&q, &k, &v, seq, d_head);
-
-        assert_eq!(out.len(), seq * d_head)
-    }
-
-    #[test]
-    fn test_softmax_row_sum_gpu() {
-        let seq: usize = 1;
-        let d_head: usize = 1;
-        let q: Vec<f32> = vec![2.0];
-        let k: Vec<f32> = vec![3.0];
-        let v: Vec<f32> = vec![4.0];
+        let cpu = attention_cpu(&q, &k, &v, seq, d_head);
         let (device, queue) = gpu_context();
-        let out = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
+        let gpu = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
 
-        // 1 / √d_k
-        // => 1.0 / √1 = 1.0
-        // QK^T / √d_k , casual mask
-        // => [2.0]*[3.0] = [6.0]
-        // score = softmax()
-        // => 1.0
-        // score * V
-        // => 1.0 * 4.0 = 4.0
-        assert!((out[0] - 6.0).abs() < 1e-4);
-    }
-
-    #[test]
-    fn test_casual_mask_gpu() {
-        let seq: usize = 2;
-        let d_head: usize = 2;
-        let q: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0];
-        let k: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0];
-        let v: Vec<f32> = vec![0.0, 1.0, 1.0, 1.0];
-        let (device, queue) = gpu_context();
-        let out = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
-
-        println!("{:?}", out);
-        // q            k           v
-        // | 1.0 0.0 | | 1.0 1.0 | | 0.0 1.0 |
-        // | 0.0 1.0 | | 1.0 1.0 | | 1.0 1.0 |
-
-        // score (d_k = 2)
-        // QK^T / √d_k , casual mask
-        // | 0.7071 0      |
-        // | 0.7071 0.7071 |
-
-        // softmax
-        // seq = 0: max = 0.7071 , sum = exp(0.7071 - 0.7071) + exp(-∞ - 0.7071) = 1.0
-        // seq = 1: max = 0.7071 , sum = exp(0.7071 - 0.7071) + exp(0.7071 - 0.7071) = 2.0
-        // exp(score-max)/sum
-        // | exp(0.7071-0.7071)/1.0  exp(-∞-0.7071)/1.0     |
-        // | exp(0.7071-0.7071)/2.0  exp(0.7071-0.7071)/2.0 |
-        // =
-        // | 1.0  0.0 |
-        // | 0.5  0.5 |
-
-        // score * v
-        // | 0.0  1.0 |
-        // | 0.5  1.0 |
-        let exp: Vec<f32> = vec![1.0, 0.0, 0.5, 0.5];
-        assert!(
-            (&out[0] - &exp[0]).abs() < 1e-4,
-            "out[0] = {}, exp[0] = {}",
-            out[0],
-            exp[0]
-        );
-        assert!(
-            (&out[1] - &exp[1]).abs() < 1e-4,
-            "out[1] = {}, exp[1] = {}",
-            out[1],
-            exp[1]
-        );
-        assert!(
-            (&out[2] - &exp[2]).abs() < 1e-4,
-            "out[2] = {}, exp[2] = {}",
-            out[2],
-            exp[2]
-        );
-        assert!(
-            (&out[3] - &exp[3]).abs() < 1e-4,
-            "out[3] = {}, exp[3] = {}",
-            out[3],
-            exp[3]
-        );
+        assert_eq!(cpu.len(), seq * d_head);
+        assert_eq!(gpu.len(), seq * d_head);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 }
