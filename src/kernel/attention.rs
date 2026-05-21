@@ -11,69 +11,90 @@ fn attention_gpu(
     seq: u32,
     d_head: u32,
 ) -> Vec<f32> {
-    let buf_q = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Q"),
+    let qkt_q = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("qkt_q"),
         contents: bytemuck::cast_slice(&q),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    let buf_k = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("K"),
+    let qkt_k = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("qkt_k"),
         contents: bytemuck::cast_slice(&k),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    let buf_v = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("V"),
-        contents: bytemuck::cast_slice(&v),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
 
-    let buf_o = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("O"),
+    let score = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("score"),
         size: (seq * seq * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
 
     let dims_padded: [u32; 4] = [seq, d_head, 0, 0];
-    let buf_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("dims"),
+    let qkt_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("qkt_dims"),
         contents: bytemuck::cast_slice(&dims_padded),
         usage: wgpu::BufferUsages::UNIFORM,
     });
 
     let module = device.create_shader_module(wgpu::include_wgsl!("../shader/attention.wgsl"));
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("attention"),
+    let qkt_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("qkt"),
         layout: None,
         module: &module,
-        entry_point: Some("attention"),
+        entry_point: Some("qkt"),
         compilation_options: wgpu::PipelineCompilationOptions::default(),
         cache: None,
     });
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let qkt_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
-        layout: &pipeline.get_bind_group_layout(0),
+        layout: &qkt_pipeline.get_bind_group_layout(0),
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: buf_q.as_entire_binding(),
+                resource: qkt_q.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: buf_k.as_entire_binding(),
+                resource: qkt_k.as_entire_binding(),
             },
-            // wgpu::BindGroupEntry {
-            //     binding: 2,
-            //     resource: buf_v.as_entire_binding(),
-            // },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: buf_o.as_entire_binding(),
+                resource: score.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: buf_dims.as_entire_binding(),
+                resource: qkt_dims.as_entire_binding(),
+            },
+        ],
+    });
+
+    let dims_padded: [u32; 4] = [seq, 0, 0, 0];
+    let sm_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("sm_dims"),
+        contents: bytemuck::cast_slice(&dims_padded),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let sm_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("softmax_causal"),
+        layout: None,
+        module: &module,
+        entry_point: Some("softmax_causal"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
+    });
+    let sm_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &sm_pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: score.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: sm_dims.as_entire_binding(),
             },
         ],
     });
@@ -87,10 +108,13 @@ fn attention_gpu(
             timestamp_writes: None,
         });
 
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
-
+        pass.set_pipeline(&qkt_pipeline);
+        pass.set_bind_group(0, &qkt_bind_group, &[]);
         pass.dispatch_workgroups(seq.div_ceil(TILE), seq.div_ceil(TILE), 1);
+
+        pass.set_pipeline(&sm_pipeline);
+        pass.set_bind_group(0, &sm_bind_group, &[]);
+        pass.dispatch_workgroups(seq.div_ceil(TILE), 1, 1);
     }
 
     let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
@@ -99,7 +123,7 @@ fn attention_gpu(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    encoder.copy_buffer_to_buffer(&buf_o, 0, &buf_read, 0, (seq * d_head * 4) as u64);
+    encoder.copy_buffer_to_buffer(&score, 0, &buf_read, 0, (seq * d_head * 4) as u64);
     queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
@@ -270,7 +294,6 @@ mod test {
         assert!((out[0] - 6.0).abs() < 1e-4);
     }
 
-
     #[test]
     fn test_casual_mask_gpu() {
         let seq: usize = 2;
@@ -281,7 +304,7 @@ mod test {
         let (device, queue) = gpu_context();
         let out = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
 
-        println!("{:?}",out);
+        println!("{:?}", out);
         // q            k           v
         // | 1.0 0.0 | | 1.0 1.0 | | 0.0 1.0 |
         // | 0.0 1.0 | | 1.0 1.0 | | 1.0 1.0 |
@@ -304,10 +327,30 @@ mod test {
         // score * v
         // | 0.0  1.0 |
         // | 0.5  1.0 |
-        let exp: Vec<f32> = vec![0.7071, -1e9, 0.7071, 0.7071];
-        assert!((&out[0] - &exp[0]).abs() < 1e-4);
-        assert!((&out[1] - &exp[1]).abs() < 1e-4);
-        assert!((&out[2] - &exp[2]).abs() < 1e-4);
-        assert!((&out[3] - &exp[3]).abs() < 1e-4);
+        let exp: Vec<f32> = vec![1.0, 0.0, 0.5, 0.5];
+        assert!(
+            (&out[0] - &exp[0]).abs() < 1e-4,
+            "out[0] = {}, exp[0] = {}",
+            out[0],
+            exp[0]
+        );
+        assert!(
+            (&out[1] - &exp[1]).abs() < 1e-4,
+            "out[1] = {}, exp[1] = {}",
+            out[1],
+            exp[1]
+        );
+        assert!(
+            (&out[2] - &exp[2]).abs() < 1e-4,
+            "out[2] = {}, exp[2] = {}",
+            out[2],
+            exp[2]
+        );
+        assert!(
+            (&out[3] - &exp[3]).abs() < 1e-4,
+            "out[3] = {}, exp[3] = {}",
+            out[3],
+            exp[3]
+        );
     }
 }
