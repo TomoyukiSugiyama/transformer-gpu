@@ -13,6 +13,10 @@ Rust で書かれた Transformer (decoder-only) 言語モデルの学習・推�
 | ドキュメント | 内容 |
 |------------|------|
 | [docs/roadmap.md](docs/roadmap.md) | 今後の改善案 / ロードマップ |
+| [docs/g1-1.md](docs/g1-1.md) | プロジェクト骨格 |
+| [docs/g1-2.md](docs/g1-2.md) | Matmul カーネル |
+| [docs/g1-3.md](docs/g1-3.md) | Attention カーネル |
+| [docs/g1-4.md](docs/g1-4.md) | Block 統合 |
 
 
 ## ディレクトリ構成
