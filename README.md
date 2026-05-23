@@ -42,6 +42,7 @@ src/
 |   |-- flash_attention.wgsl
 |   |-- matmul.wgsl
 |   |-- residual_add.wgsl
+|   |-- rms_norm.wgsl
 |   `-- shaders.wgsl
 `-- test_utils.rs
 ```

@@ -9,8 +9,6 @@ struct Dims {
 @group(0) @binding(2) var<storage, read_write> out: array<f32>;
 @group(0) @binding(3) var<uniform> dims: Dims;
 
-var<workgroup> tile_o: array<f32, SIZE>;
-
 @compute @workgroup_size(SIZE)
 fn residual_add(
     @builtin(global_invocation_id) gid: vec3<u32>,
