@@ -28,7 +28,9 @@ src/
 |   |-- attention.rs
 |   |-- matmul.rs
 |   |-- mod.rs
+|   |-- residual_add.rs
 |   |-- rms_norm.rs
+|   |-- rope.rs
 |   `-- swiglu.rs
 |-- lib.rs
 |-- main.rs
@@ -36,7 +38,10 @@ src/
 |   |-- language_model.rs
 |   `-- mod.rs
 |-- shader/     # WGSL: GPU 上で動く計算本体
+|   |-- attention.wgsl
+|   |-- flash_attention.wgsl
 |   |-- matmul.wgsl
+|   |-- residual_add.wgsl
 |   `-- shaders.wgsl
 `-- test_utils.rs
 ```
