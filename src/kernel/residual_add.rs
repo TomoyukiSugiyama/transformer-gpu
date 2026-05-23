@@ -1,5 +1,7 @@
 use wgpu::util::DeviceExt;
 
+const SIZE: u32 = 256;
+
 pub fn residual_add_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -77,7 +79,7 @@ pub fn residual_add_gpu(
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
-        pass.dispatch_workgroups(size.div_ceil(256), 1, 1);
+        pass.dispatch_workgroups(size.div_ceil(SIZE), 1, 1);
     }
 
     let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
@@ -106,19 +108,10 @@ fn residual_add_cpu(x1: &[f32], x2: &[f32]) -> Vec<f32> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
-    fn gpu_context() -> (wgpu::Device, wgpu::Queue) {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .unwrap();
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_limits: wgpu::Limits::downlevel_defaults(),
-            ..Default::default()
-        }))
-        .unwrap()
-    }
+    use crate::{
+        kernel::residual_add::{residual_add_cpu, residual_add_gpu},
+        test_utils::gpu_context,
+    };
 
     #[test]
     fn test_residual_add() {
@@ -129,7 +122,7 @@ mod test {
         let (device, queue) = gpu_context();
         let gpu = residual_add_gpu(&device, &queue, &x1, &x2); // wgpu 経由
         let exp: Vec<f32> = vec![3.0, 3.0];
-        
+
         assert_eq!(cpu[0], exp[0]);
         assert_eq!(cpu[1], exp[1]);
         assert_eq!(gpu[0], exp[0]);

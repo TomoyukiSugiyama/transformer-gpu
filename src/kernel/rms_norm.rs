@@ -126,20 +126,8 @@ fn rms_norm_cpu(x: &[f32], gamma: &[f32], eps: f32, d_model: usize) -> Vec<f32> 
 mod test {
     use crate::{
         kernel::rms_norm::{rms_norm_cpu, rms_norm_gpu},
-        test_utils::{assert_close, random_f32},
+        test_utils::{assert_close, gpu_context, random_f32},
     };
-
-    fn gpu_context() -> (wgpu::Device, wgpu::Queue) {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .unwrap();
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_limits: wgpu::Limits::downlevel_defaults(),
-            ..Default::default()
-        }))
-        .unwrap()
-    }
 
     #[test]
     fn test_rms_norm() {

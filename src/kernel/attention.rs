@@ -11,6 +11,7 @@ pub fn attention_gpu(
     seq: u32,
     d_head: u32,
 ) -> Vec<f32> {
+    let byte_size = (seq * d_head * 4) as u64;
     let fa_q = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fa_q"),
         contents: bytemuck::cast_slice(&q),
@@ -30,7 +31,7 @@ pub fn attention_gpu(
 
     let fa_score = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("fa_score"),
-        size: (seq * d_head * 4) as u64,
+        size: byte_size,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
@@ -91,16 +92,15 @@ pub fn attention_gpu(
         pass.set_pipeline(&fa_pipeline);
         pass.set_bind_group(0, &fa_bind_group, &[]);
         pass.dispatch_workgroups(seq.div_ceil(BR), 1, 1);
-
     }
 
     let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: (seq * d_head * 4) as u64,
+        size: byte_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    encoder.copy_buffer_to_buffer(&fa_score, 0, &buf_read, 0, (seq * d_head * 4) as u64);
+    encoder.copy_buffer_to_buffer(&fa_score, 0, &buf_read, 0, byte_size);
     queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
@@ -155,19 +155,7 @@ fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize) -> 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::{assert_close, random_f32};
-
-    fn gpu_context() -> (wgpu::Device, wgpu::Queue) {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .unwrap();
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_limits: wgpu::Limits::downlevel_defaults(),
-            ..Default::default()
-        }))
-        .unwrap()
-    }
+    use crate::test_utils::{assert_close, gpu_context, random_f32};
 
     #[test]
     fn test_softmax_row_sum() {

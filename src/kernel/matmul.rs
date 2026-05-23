@@ -11,6 +11,7 @@ pub fn matmul_gpu(
     k: u32,
     n: u32,
 ) -> Vec<f32> {
+    let byte_size = (m * n * 4) as u64;
     let buf_a = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("A"),
         contents: bytemuck::cast_slice(&a),
@@ -23,7 +24,7 @@ pub fn matmul_gpu(
     });
     let buf_c = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("C"),
-        size: (m * n * 4) as u64,
+        size: byte_size,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
@@ -85,11 +86,11 @@ pub fn matmul_gpu(
 
     let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: (m * n * 4) as u64,
+        size: byte_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    encoder.copy_buffer_to_buffer(&buf_c, 0, &buf_read, 0, (m * n * 4) as u64);
+    encoder.copy_buffer_to_buffer(&buf_c, 0, &buf_read, 0, byte_size);
     queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
@@ -118,19 +119,7 @@ fn matmul_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{assert_close, random_f32};
-
-    fn gpu_context() -> (wgpu::Device, wgpu::Queue) {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .unwrap();
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_limits: wgpu::Limits::downlevel_defaults(),
-            ..Default::default()
-        }))
-        .unwrap()
-    }
+    use crate::test_utils::{assert_close, gpu_context, random_f32};
 
     #[test]
     fn test_matmul_identity() {
@@ -140,8 +129,8 @@ mod tests {
         let eye: Vec<f32> = (0..16)
             .map(|i| if i / 4 == i % 4 { 1.0 } else { 0.0 })
             .collect();
-        let gpu_out = matmul_gpu(&device, &queue, &a, &eye, m as u32, k as u32, n as u32);
-        assert_close(&gpu_out, &a, 1e-4, 1e-5);
+        let gpu = matmul_gpu(&device, &queue, &a, &eye, m as u32, k as u32, n as u32);
+        assert_close(&gpu, &a, 1e-4, 1e-5);
     }
 
     #[test]
@@ -151,11 +140,11 @@ mod tests {
         let a = random_f32(m * k, 42);
         let b = random_f32(k * n, 43);
 
-        let cpu_out = matmul_cpu(&a, &b, m, k, n);
+        let cpu = matmul_cpu(&a, &b, m, k, n);
         let (device, queue) = gpu_context();
-        let gpu_out = matmul_gpu(&device, &queue, &a, &b, m as u32, k as u32, n as u32); // wgpu 経由
+        let gpu = matmul_gpu(&device, &queue, &a, &b, m as u32, k as u32, n as u32);
 
-        assert_close(&gpu_out, &cpu_out, 1e-4, 1e-5);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 
     #[test]
@@ -164,10 +153,10 @@ mod tests {
         let a = random_f32(m * k, 1);
         let b = random_f32(k * n, 2);
 
-        let cpu_out = matmul_cpu(&a, &b, m, k, n);
+        let cpu = matmul_cpu(&a, &b, m, k, n);
         let (device, queue) = gpu_context();
-        let gpu_out = matmul_gpu(&device, &queue, &a, &b, m as u32, k as u32, n as u32); // wgpu 経由
+        let gpu = matmul_gpu(&device, &queue, &a, &b, m as u32, k as u32, n as u32);
 
-        assert_close(&gpu_out, &cpu_out, 1e-4, 1e-6);
+        assert_close(&gpu, &cpu, 1e-4, 1e-6);
     }
 }
