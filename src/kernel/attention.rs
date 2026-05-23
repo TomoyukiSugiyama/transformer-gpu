@@ -1,6 +1,7 @@
 use wgpu::util::DeviceExt;
 
 const BR: u32 = 64;
+const MAX_D_HEAD: u32 = 128;
 
 pub fn attention_gpu(
     device: &wgpu::Device,
@@ -11,6 +12,7 @@ pub fn attention_gpu(
     seq: u32,
     d_head: u32,
 ) -> Vec<f32> {
+    assert!(d_head < MAX_D_HEAD, "d_head({d_head}) exceeds MAX_D_HEAD({MAX_D_HEAD}).");
     let byte_size = (seq * d_head * 4) as u64;
     let fa_q = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fa_q"),
