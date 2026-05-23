@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-const TILE: u32 = 16;
+const BR: u32 = 64;
 
 pub fn attention_gpu(
     device: &wgpu::Device,
@@ -11,141 +11,70 @@ pub fn attention_gpu(
     seq: u32,
     d_head: u32,
 ) -> Vec<f32> {
-    let qkt_q = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("qkt_q"),
+    let fa_q = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fa_q"),
         contents: bytemuck::cast_slice(&q),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    let qkt_k = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("qkt_k"),
+    let fa_k = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fa_k"),
         contents: bytemuck::cast_slice(&k),
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    let score = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("score"),
-        size: (seq * seq * 4) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-
-    let dims_padded: [u32; 4] = [seq, d_head, 0, 0];
-    let qkt_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("qkt_dims"),
-        contents: bytemuck::cast_slice(&dims_padded),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-
-    let module = device.create_shader_module(wgpu::include_wgsl!("../shader/attention.wgsl"));
-    let qkt_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("qkt"),
-        layout: None,
-        module: &module,
-        entry_point: Some("qkt"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    });
-
-    let qkt_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &qkt_pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: qkt_q.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: qkt_k.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: score.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: qkt_dims.as_entire_binding(),
-            },
-        ],
-    });
-
-    let dims_padded: [u32; 4] = [seq, 0, 0, 0];
-    let sm_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("sm_dims"),
-        contents: bytemuck::cast_slice(&dims_padded),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-
-    let sm_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("softmax_causal"),
-        layout: None,
-        module: &module,
-        entry_point: Some("softmax_causal"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    });
-    let sm_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &sm_pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: score.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: sm_dims.as_entire_binding(),
-            },
-        ],
-    });
-
-    let av_v = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("av_v"),
+    let fa_v = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fa_v"),
         contents: bytemuck::cast_slice(&v),
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    let av_o = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("av_o"),
+    let fa_score = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("fa_score"),
         size: (seq * d_head * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
 
     let dims_padded: [u32; 4] = [seq, d_head, 0, 0];
-    let av_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("av_dims"),
+    let fa_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fa_dims"),
         contents: bytemuck::cast_slice(&dims_padded),
         usage: wgpu::BufferUsages::UNIFORM,
     });
 
-    let av_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("attn_v"),
+    let module = device.create_shader_module(wgpu::include_wgsl!("../shader/flash_attention.wgsl"));
+    let fa_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("flash_attention"),
         layout: None,
         module: &module,
-        entry_point: Some("attn_v"),
+        entry_point: Some("flash_attention"),
         compilation_options: wgpu::PipelineCompilationOptions::default(),
         cache: None,
     });
-    let av_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+
+    let fa_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
-        layout: &av_pipeline.get_bind_group_layout(0),
+        layout: &fa_pipeline.get_bind_group_layout(0),
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: score.as_entire_binding(),
+                resource: fa_q.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: av_v.as_entire_binding(),
+                resource: fa_k.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: av_o.as_entire_binding(),
+                resource: fa_v.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: av_dims.as_entire_binding(),
+                resource: fa_score.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: fa_dims.as_entire_binding(),
             },
         ],
     });
@@ -159,17 +88,10 @@ pub fn attention_gpu(
             timestamp_writes: None,
         });
 
-        pass.set_pipeline(&qkt_pipeline);
-        pass.set_bind_group(0, &qkt_bind_group, &[]);
-        pass.dispatch_workgroups(seq.div_ceil(TILE), seq.div_ceil(TILE), 1);
+        pass.set_pipeline(&fa_pipeline);
+        pass.set_bind_group(0, &fa_bind_group, &[]);
+        pass.dispatch_workgroups(seq.div_ceil(BR), 1, 1);
 
-        pass.set_pipeline(&sm_pipeline);
-        pass.set_bind_group(0, &sm_bind_group, &[]);
-        pass.dispatch_workgroups(seq.div_ceil(64), 1, 1);
-
-        pass.set_pipeline(&av_pipeline);
-        pass.set_bind_group(0, &av_bind_group, &[]);
-        pass.dispatch_workgroups(d_head.div_ceil(TILE), seq.div_ceil(TILE), 1);
     }
 
     let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
@@ -178,7 +100,7 @@ pub fn attention_gpu(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    encoder.copy_buffer_to_buffer(&av_o, 0, &buf_read, 0, (seq * d_head * 4) as u64);
+    encoder.copy_buffer_to_buffer(&fa_score, 0, &buf_read, 0, (seq * d_head * 4) as u64);
     queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
@@ -218,7 +140,7 @@ fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize) -> 
         }
     }
 
-    // score * V
+    // fa_score * V
     let mut out = vec![0.0f32; seq * d_head];
     for i in 0..seq {
         for d in 0..d_head {
@@ -263,9 +185,9 @@ mod test {
         // => 1.0 / √1 = 1.0
         // QK^T / √d_k , casual mask
         // => [2.0]*[3.0] = [6.0]
-        // score = softmax()
+        // fa_score = softmax()
         // => 1.0
-        // score * V
+        // fa_score * V
         // => 1.0 * 4.0 = 4.0
         assert!((cpu[0] - 4.0).abs() < 1e-4);
         assert!((gpu[0] - 4.0).abs() < 1e-4);
@@ -287,7 +209,7 @@ mod test {
         // | 1.0 0.0 | | 1.0 1.0 | | 0.0 1.0 |
         // | 0.0 1.0 | | 1.0 1.0 | | 1.0 1.0 |
 
-        // score (d_k = 2)
+        // fa_score (d_k = 2)
         // QK^T / √d_k , casual mask
         // | 0.7071 0      |
         // | 0.7071 0.7071 |
@@ -295,14 +217,14 @@ mod test {
         // softmax
         // seq = 0: max = 0.7071 , sum = exp(0.7071 - 0.7071) + exp(-∞ - 0.7071) = 1.0
         // seq = 1: max = 0.7071 , sum = exp(0.7071 - 0.7071) + exp(0.7071 - 0.7071) = 2.0
-        // exp(score-max)/sum
+        // exp(fa_score-max)/sum
         // | exp(0.7071-0.7071)/1.0  exp(-∞-0.7071)/1.0     |
         // | exp(0.7071-0.7071)/2.0  exp(0.7071-0.7071)/2.0 |
         // =
         // | 1.0  0.0 |
         // | 0.5  0.5 |
 
-        // score * v
+        // fa_score * v
         // | 0.0  1.0 |
         // | 0.5  1.0 |
         let exp: Vec<f32> = vec![0.0, 1.0, 0.5, 1.0];

@@ -16,8 +16,8 @@ Cargo.toml（wgpu + bytemuck + pollster）、ディレクトリ構成（src/kern
 ### G-1-2 Matmul カーネル ✅ 完了
 WGSL で Tiled GEMM 実装、CPU 実装と数値一致確認、f32 / f16 両対応の検討。
 
-### G-1-3 Attention カーネル
-QK^T → scale → causal mask → softmax → V の一連。Fused Attention（FlashAttention ライク）は G-1-3b として分けると良い。
+### G-1-3 Attention カーネル ✅ 完了
+QK^T → scale → causal mask → softmax → V の一連。Fused Attention（FlashAttention）は G-1-3b として実施。
 
 ### G-1-4 Block 統合
 RMSNorm、SwiGLU FFN、Residual Add を GPU 化。TransformerBlock 単体で CPU 版と出力一致を確認。
