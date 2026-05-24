@@ -48,5 +48,6 @@ src/
 |   |-- rms_norm.wgsl
 |   |-- rope.wgsl
 |   `-- swiglu_elementwise.wgsl
-`-- test_utils.rs
+|-- test_utils.rs
+`-- util.rs
 ```
