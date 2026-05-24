@@ -12,7 +12,6 @@ struct Dims {
 @compute @workgroup_size(SIZE, 1, 1)
 fn residual_add(
     @builtin(global_invocation_id) gid: vec3<u32>,
-    @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
     let idx = gid.x;
     if idx > dims.size { return;}

@@ -10,8 +10,19 @@ fn rms_norm_gpu(
     eps: f32,
     d_model: u32,
 ) -> Vec<f32> {
-    let seq = x.len() / d_model as usize;
-    let byte_size = (seq * d_model as usize * 4) as u64;
+    assert_eq!(
+        x.len() as u32 % d_model,
+        0,
+        "x.len() must be divisible by d_model"
+    );
+    assert!(
+        d_model <= WG,
+        "d_model={} exceeds workgroup_size={}",
+        d_model,
+        WG
+    );
+    let seq = x.len() as u32 / d_model;
+    let byte_size = (seq * d_model * 4) as u64;
     let buf_x = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("x"),
         contents: bytemuck::cast_slice(&x),
@@ -81,7 +92,7 @@ fn rms_norm_gpu(
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
-        pass.dispatch_workgroups(seq as u32, 1, 1);
+        pass.dispatch_workgroups(seq, 1, 1);
     }
 
     let buf_read = device.create_buffer(&wgpu::BufferDescriptor {

@@ -43,6 +43,7 @@ src/
 |   |-- matmul.wgsl
 |   |-- residual_add.wgsl
 |   |-- rms_norm.wgsl
+|   |-- rope.wgsl
 |   `-- shaders.wgsl
 `-- test_utils.rs
 ```

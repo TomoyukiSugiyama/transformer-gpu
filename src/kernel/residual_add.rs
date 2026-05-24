@@ -120,7 +120,7 @@ mod test {
 
         let cpu = residual_add_cpu(&x1, &x2);
         let (device, queue) = gpu_context();
-        let gpu = residual_add_gpu(&device, &queue, &x1, &x2); // wgpu 経由
+        let gpu = residual_add_gpu(&device, &queue, &x1, &x2);
         let exp: Vec<f32> = vec![3.0, 3.0];
 
         assert_eq!(cpu[0], exp[0]);

@@ -29,6 +29,8 @@ QK^T → scale → causal mask → softmax → V の一連。Fused Attention（F
 ### G-1-4 Block 統合
 RMSNorm、SwiGLU FFN、Residual Add、RoPE を GPU 化。TransformerBlock 単体で CPU 版と出力一致を確認。
 
+-> [G-1-4](g1-4.md)
+
 ### G-1-5 学習ループ
 backward カーネル実装、AdamW の GPU 化、loss 計算。CPU 版より複雑なので最も工数がかかるフェーズ。
 
