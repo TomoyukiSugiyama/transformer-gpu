@@ -4,6 +4,7 @@ use crate::gpu_context::GpuContext;
 
 const BR: u32 = 64;
 const MAX_D_HEAD: u32 = 128;
+const TILE: u32 = 16u32; // befor_flash_attention_gpu で利用する
 
 pub fn attention_gpu(
     ctx: &GpuContext,
@@ -125,6 +126,228 @@ pub fn attention_gpu(
         mapped_at_creation: false,
     });
     encoder.copy_buffer_to_buffer(&fa_score, 0, &buf_read, 0, byte_size);
+    ctx.queue.submit([encoder.finish()]);
+
+    let slice = buf_read.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+
+    ctx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+
+    let data = slice.get_mapped_range();
+    bytemuck::allocation::pod_collect_to_vec(&data)
+}
+
+/// Flash Attention 導入前の実装、ベンチで利用
+#[allow(dead_code)]
+pub fn before_flash_attention_gpu(
+    ctx: &GpuContext,
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    seq: u32,
+    d_head: u32,
+) -> Vec<f32> {
+    assert!(
+        d_head <= MAX_D_HEAD,
+        "d_head={} exceeds MAX_D_HEAD={}",
+        d_head,
+        MAX_D_HEAD
+    );
+    assert_eq!(q.len(), (seq * d_head) as usize, "q must be seq×d_head");
+    assert_eq!(k.len(), (seq * d_head) as usize, "k must be seq×d_head");
+    assert_eq!(v.len(), (seq * d_head) as usize, "v must be seq×d_head");
+    let byte_size = (seq * d_head * 4) as u64;
+    let qkt_q = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("qkt_q"),
+            contents: bytemuck::cast_slice(&q),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let qkt_k = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("qkt_k"),
+            contents: bytemuck::cast_slice(&k),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+    let score = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("score"),
+        size: (seq * seq * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let dims_padded: [u32; 4] = [seq, d_head, 0, 0];
+    let qkt_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("qkt_dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+    let module = ctx
+        .device
+        .create_shader_module(wgpu::include_wgsl!("../shader/attention.wgsl"));
+    let qkt_pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("qkt"),
+            layout: None,
+            module: &module,
+            entry_point: Some("qkt"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+    let qkt_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &qkt_pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: qkt_q.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: qkt_k.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: score.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: qkt_dims.as_entire_binding(),
+            },
+        ],
+    });
+
+    let dims_padded: [u32; 4] = [seq, 0, 0, 0];
+    let sm_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sm_dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+    let sm_pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("softmax_causal"),
+            layout: None,
+            module: &module,
+            entry_point: Some("softmax_causal"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+    let sm_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &sm_pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: score.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: sm_dims.as_entire_binding(),
+            },
+        ],
+    });
+
+    let av_v = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("av_v"),
+            contents: bytemuck::cast_slice(&v),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+    let av_o = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("av_o"),
+        size: byte_size as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let dims_padded: [u32; 4] = [seq, d_head, 0, 0];
+    let av_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("av_dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+    let av_pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("attn_v"),
+            layout: None,
+            module: &module,
+            entry_point: Some("attn_v"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+    let av_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &av_pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: score.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: av_v.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: av_o.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: av_dims.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+
+        pass.set_pipeline(&qkt_pipeline);
+        pass.set_bind_group(0, &qkt_bind_group, &[]);
+        pass.dispatch_workgroups(seq.div_ceil(TILE), seq.div_ceil(TILE), 1);
+
+        pass.set_pipeline(&sm_pipeline);
+        pass.set_bind_group(0, &sm_bind_group, &[]);
+        pass.dispatch_workgroups(seq.div_ceil(64), 1, 1);
+
+        pass.set_pipeline(&av_pipeline);
+        pass.set_bind_group(0, &av_bind_group, &[]);
+        pass.dispatch_workgroups(d_head.div_ceil(TILE), seq.div_ceil(TILE), 1);
+    }
+
+    let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: byte_size as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_buffer_to_buffer(&av_o, 0, &buf_read, 0, byte_size as u64);
     ctx.queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);

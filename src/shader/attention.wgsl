@@ -10,8 +10,8 @@ struct QktDims {
 @group(0) @binding(2) var<storage, read_write> qkt_scores: array<f32>;
 @group(0) @binding(3) var<uniform> qkt_dims: QktDims;
 
-var<workgroup> tile_q: array<array<f32, 16u>, 16u>;
-var<workgroup> tile_k: array<array<f32, 16u>, 16u>;
+var<workgroup> tile_q: array<array<f32, TILE>, TILE>;
+var<workgroup> tile_k: array<array<f32, TILE>, TILE>;
 
 @compute @workgroup_size(TILE, TILE, 1)
 fn qkt(
@@ -101,8 +101,8 @@ struct AttnVDims {
 @group(0) @binding(2) var<storage, read_write> av_o: array<f32>;
 @group(0) @binding(3) var<uniform> av_dims: AttnVDims;
 
-var<workgroup> tile_s: array<array<f32, 16u>, 16u>;
-var<workgroup> tile_v: array<array<f32, 16u>, 16u>;
+var<workgroup> tile_s: array<array<f32, TILE>, TILE>;
+var<workgroup> tile_v: array<array<f32, TILE>, TILE>;
 
 @compute @workgroup_size(TILE, TILE, 1)
 fn attn_v(
