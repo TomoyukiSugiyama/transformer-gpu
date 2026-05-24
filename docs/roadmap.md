@@ -26,7 +26,7 @@ QK^T → scale → causal mask → softmax → V の一連。Fused Attention（F
 
 -> [G-1-3](g1-3.md)
 
-### G-1-4 Block 統合
+### G-1-4 Block 統合 ✅ 完了
 RMSNorm、SwiGLU FFN、Residual Add、RoPE を GPU 化。TransformerBlock 単体で CPU 版と出力一致を確認。
 
 -> [G-1-4](g1-4.md)

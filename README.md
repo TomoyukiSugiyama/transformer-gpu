@@ -36,7 +36,9 @@ src/
 |-- main.rs
 |-- model/      # Transformer のブロック構成（kernel を組み合わせる）
 |   |-- language_model.rs
-|   `-- mod.rs
+|   |-- mod.rs
+|   |-- multi_head_attention.rs
+|   `-- transformer_block.rs
 |-- shader/     # WGSL: GPU 上で動く計算本体
 |   |-- attention.wgsl
 |   |-- flash_attention.wgsl

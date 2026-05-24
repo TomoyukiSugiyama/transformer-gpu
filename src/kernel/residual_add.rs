@@ -103,7 +103,7 @@ pub fn residual_add_gpu(
 
 // CPU リファレンス
 #[cfg(test)]
-fn residual_add_cpu(x1: &[f32], x2: &[f32]) -> Vec<f32> {
+pub fn residual_add_cpu(x1: &[f32], x2: &[f32]) -> Vec<f32> {
     assert_eq!(x1.len(), x2.len(), "x1 and x2 must have the same length");
     x1.iter().zip(x2.iter()).map(|(a, b)| *a + *b).collect()
 }

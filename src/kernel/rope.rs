@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-fn create_table(d_head: usize, max_len: usize, base: f32) -> (Vec<f32>, Vec<f32>) {
+pub fn create_table(d_head: usize, max_len: usize, base: f32) -> (Vec<f32>, Vec<f32>) {
     let half = d_head / 2;
     let mut cos_table: Vec<f32> = vec![0.0; max_len * half];
     let mut sin_table: Vec<f32> = vec![0.0; max_len * half];
@@ -15,7 +15,7 @@ fn create_table(d_head: usize, max_len: usize, base: f32) -> (Vec<f32>, Vec<f32>
     (cos_table, sin_table)
 }
 
-fn rope_gpu(
+pub fn rope_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     x: &[f32],
@@ -145,7 +145,7 @@ fn rope_gpu(
 
 // CPU リファレンス
 #[cfg(test)]
-fn rope_cpu(x: &[f32], d_head: usize, cos_table: &[f32], sin_table: &[f32]) -> Vec<f32> {
+pub fn rope_cpu(x: &[f32], d_head: usize, cos_table: &[f32], sin_table: &[f32]) -> Vec<f32> {
     assert!(d_head % 2 == 0, "d_head must be even for RoPE");
     assert_eq!(x.len() % d_head, 0, "x.len() must be divisible by d_head");
     let half = d_head / 2;

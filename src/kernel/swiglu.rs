@@ -4,7 +4,7 @@ use crate::kernel::matmul::matmul_gpu;
 
 const SIZE: u32 = 256;
 
-fn swiglu_gpu(
+pub fn swiglu_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     x: &[f32],
@@ -144,7 +144,7 @@ pub fn elementwise_with<F: Fn(f32, f32) -> f32>(data: &[f32], other: &[f32], f: 
 }
 
 #[cfg(test)]
-fn swiglu_cpu(
+pub fn swiglu_cpu(
     x: &[f32],
     w_gate: &[f32],
     w_up: &[f32],
