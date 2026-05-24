@@ -2,73 +2,125 @@ use crate::{
     gpu_context::GpuContext,
     kernel::{residual_add::residual_add_gpu, rms_norm::rms_norm_gpu, swiglu::swiglu_gpu},
     model::multi_head_attention::multi_head_attention_gpu,
+    util::random_f32,
 };
 
-pub fn transformer_block_gpu(
-    ctx: &GpuContext,
-    seq: u32,
-    d_model: u32,
-    n_heads: u32,
-    d_ff: u32,
-    x: &[f32],
-    w_q: &[f32],
-    w_k: &[f32],
-    w_v: &[f32],
-    w_o: &[f32],
-    w_gate: &[f32],
-    w_up: &[f32],
-    w_down: &[f32],
-    cos_table: &[f32],
-    sin_table: &[f32],
-) -> Vec<f32> {
-    let gamma: Vec<f32> = vec![1.0; d_model as usize];
-    let eps = 1e-6;
-    let norm1 = rms_norm_gpu(&ctx, &x, &gamma, eps, d_model as u32);
-    let mha = multi_head_attention_gpu(
-        &ctx, seq, d_model, n_heads, &norm1, w_q, w_k, w_v, w_o, cos_table, sin_table,
-    );
-    let add = residual_add_gpu(&ctx, x, &mha);
-    let norm2 = rms_norm_gpu(&ctx, &add, &gamma, eps, d_model as u32);
-    let ffn = swiglu_gpu(&ctx, &norm2, w_gate, w_up, w_down, seq, d_model, d_ff);
-    let out = residual_add_gpu(&ctx, &add, &ffn);
-
-    out
+pub struct TransformerBlock {
+    pub w_q: Vec<f32>,
+    pub w_k: Vec<f32>,
+    pub w_v: Vec<f32>,
+    pub w_o: Vec<f32>,
+    pub w_gate: Vec<f32>,
+    pub w_up: Vec<f32>,
+    pub w_down: Vec<f32>,
+    pub gamma_1: Vec<f32>, // RMSNorm の γ
+    pub gamma_2: Vec<f32>,
 }
 
-// CPU リファレンス
-#[cfg(test)]
-pub fn transformer_block_cpu(
-    seq: usize,
-    d_model: usize,
-    n_heads: usize,
-    d_ff: usize,
-    x: &[f32],
-    w_q: &[f32],
-    w_k: &[f32],
-    w_v: &[f32],
-    w_o: &[f32],
-    w_gate: &[f32],
-    w_up: &[f32],
-    w_down: &[f32],
-    cos_table: &[f32],
-    sin_table: &[f32],
-) -> Vec<f32> {
-    use crate::{
-        kernel::{residual_add::residual_add_cpu, rms_norm::rms_norm_cpu, swiglu::swiglu_cpu},
-        model::multi_head_attention::multi_head_attention_cpu,
-    };
-    let gamma: Vec<f32> = vec![1.0; d_model as usize];
-    let eps = 1e-6;
-    let norm1 = rms_norm_cpu(&x, &gamma, eps, d_model);
-    let mha = multi_head_attention_cpu(
-        seq, d_model, n_heads, &norm1, w_q, w_k, w_v, w_o, cos_table, sin_table,
-    );
-    let add = residual_add_cpu(x, &mha);
-    let norm2 = rms_norm_cpu(&add, &gamma, eps, d_model);
-    let ffn = swiglu_cpu(&norm2, w_gate, w_up, w_down, seq, d_model, d_ff);
-    let out = residual_add_cpu(&add, &ffn);
+pub struct TransformerBlockConfig {
+    pub seq: usize,
+    pub d_model: usize,
+    pub n_heads: usize,
+    pub d_ff: usize,
+    pub eps: f32,
+}
 
-    out
+impl TransformerBlock {
+    pub fn new(cfg: &TransformerBlockConfig) -> Self {
+        Self {
+            w_q: random_f32(cfg.d_model * cfg.d_model, 32),
+            w_k: random_f32(cfg.d_model * cfg.d_model, 33),
+            w_v: random_f32(cfg.d_model * cfg.d_model, 34),
+            w_o: random_f32(cfg.d_model * cfg.d_model, 35),
+            w_gate: random_f32(cfg.d_model * cfg.d_ff, 36),
+            w_up: random_f32(cfg.d_model * cfg.d_ff, 37),
+            w_down: random_f32(cfg.d_ff * cfg.d_model, 38),
+            gamma_1: random_f32(cfg.d_model, 38),
+            gamma_2: random_f32(cfg.d_model, 38),
+        }
+    }
+
+    pub fn forward(
+        &self,
+        ctx: &GpuContext,
+        cfg: &TransformerBlockConfig,
+        x: &[f32],
+        cos_table: &[f32],
+        sin_table: &[f32],
+    ) -> Vec<f32> {
+        let norm1 = rms_norm_gpu(&ctx, &x, &self.gamma_1, cfg.eps, cfg.d_model as u32);
+        let mha = multi_head_attention_gpu(
+            &ctx,
+            cfg.seq as u32,
+            cfg.d_model as u32,
+            cfg.n_heads as u32,
+            &norm1,
+            &self.w_q,
+            &self.w_k,
+            &self.w_v,
+            &self.w_o,
+            cos_table,
+            sin_table,
+        );
+        let add = residual_add_gpu(&ctx, x, &mha);
+        let norm2 = rms_norm_gpu(&ctx, &add, &self.gamma_2, cfg.eps, cfg.d_model as u32);
+        let ffn = swiglu_gpu(
+            &ctx,
+            &norm2,
+            &self.w_gate,
+            &self.w_up,
+            &self.w_down,
+            cfg.seq as u32,
+            cfg.d_model as u32,
+            cfg.d_ff as u32,
+        );
+        let out = residual_add_gpu(&ctx, &add, &ffn);
+
+        out
+    }
+
+    // CPU リファレンス
+    #[cfg(test)]
+    pub fn forward_cpu(
+        &self,
+        cfg: &TransformerBlockConfig,
+        x: &[f32],
+        cos_table: &[f32],
+        sin_table: &[f32],
+    ) -> Vec<f32> {
+        use crate::{
+            kernel::{residual_add::residual_add_cpu, rms_norm::rms_norm_cpu, swiglu::swiglu_cpu},
+            model::multi_head_attention::multi_head_attention_cpu,
+        };
+
+        let norm1 = rms_norm_cpu(&x, &self.gamma_1, cfg.eps, cfg.d_model);
+        let mha = multi_head_attention_cpu(
+            cfg.seq,
+            cfg.d_model,
+            cfg.n_heads,
+            &norm1,
+            &self.w_q,
+            &self.w_k,
+            &self.w_v,
+            &self.w_o,
+            cos_table,
+            sin_table,
+        );
+        let add = residual_add_cpu(x, &mha);
+        let norm2 = rms_norm_cpu(&add, &self.gamma_2, cfg.eps, cfg.d_model);
+        let ffn = swiglu_cpu(
+            &norm2,
+            &self.w_gate,
+            &self.w_up,
+            &self.w_down,
+            cfg.seq,
+            cfg.d_model,
+            cfg.d_ff,
+        );
+        let out = residual_add_cpu(&add, &ffn);
+
+        out
+    }
 }
 
 #[cfg(test)]
@@ -76,186 +128,103 @@ mod test {
     use crate::{
         gpu_context::GpuContext,
         kernel::rope::create_table,
-        model::transformer_block::{transformer_block_cpu, transformer_block_gpu},
-        test_utils::{assert_close, random_f32},
+        model::transformer_block::{TransformerBlock, TransformerBlockConfig},
+        test_utils::assert_close,
+        util::random_f32,
     };
 
     #[test]
     fn test_transformer_block() {
-        let seq: usize = 1024;
-        let d_model: usize = 64;
-        let d_ff = 128;
-        let n_heads: usize = 4;
-        let x: Vec<f32> = random_f32(seq * d_model, 31);
-        let w_q: Vec<f32> = random_f32(d_model * d_model, 32);
-        let w_k: Vec<f32> = random_f32(d_model * d_model, 33);
-        let w_v: Vec<f32> = random_f32(d_model * d_model, 34);
-        let w_o: Vec<f32> = random_f32(d_model * d_model, 35);
-        let w_gate: Vec<f32> = random_f32(d_model * d_ff, 36);
-        let w_up: Vec<f32> = random_f32(d_model * d_ff, 37);
-        let w_down: Vec<f32> = random_f32(d_ff * d_model, 38);
-        let d_head = d_model / n_heads;
+        let ctx = GpuContext::new();
+        let cfg = TransformerBlockConfig {
+            seq: 1024,
+            d_model: 64,
+            n_heads: 4,
+            d_ff: 128,
+            eps: 1e-6,
+        };
+
+        let x: Vec<f32> = random_f32(cfg.seq * cfg.d_model, 31);
+        let d_head = cfg.d_model / cfg.n_heads;
         let max_len = 1024;
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
 
-        let ctx = GpuContext::new();
-        let cpu = transformer_block_cpu(
-            seq, d_model, n_heads, d_ff, &x, &w_q, &w_k, &w_v, &w_o, &w_gate, &w_up, &w_down,
-            &cos_table, &sin_table,
-        );
-        let gpu = transformer_block_gpu(
-            &ctx,
-            seq as u32,
-            d_model as u32,
-            n_heads as u32,
-            d_ff as u32,
-            &x,
-            &w_q,
-            &w_k,
-            &w_v,
-            &w_o,
-            &w_gate,
-            &w_up,
-            &w_down,
-            &cos_table,
-            &sin_table,
-        );
+        let tf = TransformerBlock::new(&cfg);
+        let cpu = tf.forward_cpu(&cfg, &x, &cos_table, &sin_table);
+        let gpu = tf.forward(&ctx, &cfg, &x, &cos_table, &sin_table);
 
         assert_close(&gpu, &cpu, 1e-2, 1e-3);
     }
 
     #[test]
     fn test_one_seq() {
-        let seq: usize = 1;
-        let d_model: usize = 64;
-        let d_ff = 128;
-        let n_heads: usize = 4;
-        let x: Vec<f32> = random_f32(seq * d_model, 31);
-        let w_q: Vec<f32> = random_f32(d_model * d_model, 32);
-        let w_k: Vec<f32> = random_f32(d_model * d_model, 33);
-        let w_v: Vec<f32> = random_f32(d_model * d_model, 34);
-        let w_o: Vec<f32> = random_f32(d_model * d_model, 35);
-        let w_gate: Vec<f32> = random_f32(d_model * d_ff, 36);
-        let w_up: Vec<f32> = random_f32(d_model * d_ff, 37);
-        let w_down: Vec<f32> = random_f32(d_ff * d_model, 38);
-        let d_head = d_model / n_heads;
+        let ctx = GpuContext::new();
+        let cfg = TransformerBlockConfig {
+            seq: 1,
+            d_model: 64,
+            n_heads: 4,
+            d_ff: 128,
+            eps: 1e-6,
+        };
+
+        let x: Vec<f32> = random_f32(cfg.seq * cfg.d_model, 31);
+        let d_head = cfg.d_model / cfg.n_heads;
         let max_len = 1;
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
 
-        let ctx = GpuContext::new();
-        let cpu = transformer_block_cpu(
-            seq, d_model, n_heads, d_ff, &x, &w_q, &w_k, &w_v, &w_o, &w_gate, &w_up, &w_down,
-            &cos_table, &sin_table,
-        );
-        let gpu = transformer_block_gpu(
-            &ctx,
-            seq as u32,
-            d_model as u32,
-            n_heads as u32,
-            d_ff as u32,
-            &x,
-            &w_q,
-            &w_k,
-            &w_v,
-            &w_o,
-            &w_gate,
-            &w_up,
-            &w_down,
-            &cos_table,
-            &sin_table,
-        );
+        let tf = TransformerBlock::new(&cfg);
+        let cpu = tf.forward_cpu(&cfg, &x, &cos_table, &sin_table);
+        let gpu = tf.forward(&ctx, &cfg, &x, &cos_table, &sin_table);
 
         assert_close(&gpu, &cpu, 1e-2, 1e-3);
     }
 
     #[test]
     fn test_one_n_heads() {
-        let seq: usize = 1024;
-        let d_model: usize = 64;
-        let d_ff = 128;
-        let n_heads: usize = 1;
-        let x: Vec<f32> = random_f32(seq * d_model, 31);
-        let w_q: Vec<f32> = random_f32(d_model * d_model, 32);
-        let w_k: Vec<f32> = random_f32(d_model * d_model, 33);
-        let w_v: Vec<f32> = random_f32(d_model * d_model, 34);
-        let w_o: Vec<f32> = random_f32(d_model * d_model, 35);
-        let w_gate: Vec<f32> = random_f32(d_model * d_ff, 36);
-        let w_up: Vec<f32> = random_f32(d_model * d_ff, 37);
-        let w_down: Vec<f32> = random_f32(d_ff * d_model, 38);
-        let d_head = d_model / n_heads;
+        let ctx = GpuContext::new();
+        let cfg = TransformerBlockConfig {
+            seq: 1024,
+            d_model: 64,
+            n_heads: 1,
+            d_ff: 128,
+            eps: 1e-6,
+        };
+
+        let x: Vec<f32> = random_f32(cfg.seq * cfg.d_model, 31);
+        let d_head = cfg.d_model / cfg.n_heads;
         let max_len = 1024;
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
 
-        let ctx = GpuContext::new();
-        let cpu = transformer_block_cpu(
-            seq, d_model, n_heads, d_ff, &x, &w_q, &w_k, &w_v, &w_o, &w_gate, &w_up, &w_down,
-            &cos_table, &sin_table,
-        );
-        let gpu = transformer_block_gpu(
-            &ctx,
-            seq as u32,
-            d_model as u32,
-            n_heads as u32,
-            d_ff as u32,
-            &x,
-            &w_q,
-            &w_k,
-            &w_v,
-            &w_o,
-            &w_gate,
-            &w_up,
-            &w_down,
-            &cos_table,
-            &sin_table,
-        );
+        let tf = TransformerBlock::new(&cfg);
+        let cpu = tf.forward_cpu(&cfg, &x, &cos_table, &sin_table);
+        let gpu = tf.forward(&ctx, &cfg, &x, &cos_table, &sin_table);
 
         assert_close(&gpu, &cpu, 2e-1, 1e-2);
     }
 
     #[test]
     fn test_d_model_equals_d_ff() {
-        let seq: usize = 1024;
-        let d_model: usize = 64;
-        let d_ff = 64;
-        let n_heads: usize = 4;
-        let x: Vec<f32> = random_f32(seq * d_model, 31);
-        let w_q: Vec<f32> = random_f32(d_model * d_model, 32);
-        let w_k: Vec<f32> = random_f32(d_model * d_model, 33);
-        let w_v: Vec<f32> = random_f32(d_model * d_model, 34);
-        let w_o: Vec<f32> = random_f32(d_model * d_model, 35);
-        let w_gate: Vec<f32> = random_f32(d_model * d_ff, 36);
-        let w_up: Vec<f32> = random_f32(d_model * d_ff, 37);
-        let w_down: Vec<f32> = random_f32(d_ff * d_model, 38);
-        let d_head = d_model / n_heads;
+        let ctx = GpuContext::new();
+        let cfg = TransformerBlockConfig {
+            seq: 1024,
+            d_model: 64,
+            n_heads: 4,
+            d_ff: 64,
+            eps: 1e-6,
+        };
+
+        let x: Vec<f32> = random_f32(cfg.seq * cfg.d_model, 31);
+        let d_head = cfg.d_model / cfg.n_heads;
         let max_len = 1024;
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
 
-        let ctx = GpuContext::new();
-        let cpu = transformer_block_cpu(
-            seq, d_model, n_heads, d_ff, &x, &w_q, &w_k, &w_v, &w_o, &w_gate, &w_up, &w_down,
-            &cos_table, &sin_table,
-        );
-        let gpu = transformer_block_gpu(
-            &ctx,
-            seq as u32,
-            d_model as u32,
-            n_heads as u32,
-            d_ff as u32,
-            &x,
-            &w_q,
-            &w_k,
-            &w_v,
-            &w_o,
-            &w_gate,
-            &w_up,
-            &w_down,
-            &cos_table,
-            &sin_table,
-        );
+        let tf = TransformerBlock::new(&cfg);
+        let cpu = tf.forward_cpu(&cfg, &x, &cos_table, &sin_table);
+        let gpu = tf.forward(&ctx, &cfg, &x, &cos_table, &sin_table);
 
         assert_close(&gpu, &cpu, 1e-2, 1e-3);
     }

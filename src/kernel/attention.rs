@@ -185,7 +185,7 @@ pub fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize)
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::{assert_close, random_f32};
+    use crate::{test_utils::assert_close, util::random_f32};
 
     #[test]
     fn test_softmax_row_sum() {

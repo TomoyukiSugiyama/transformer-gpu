@@ -154,7 +154,8 @@ mod test {
     use crate::{
         gpu_context::GpuContext,
         kernel::rms_norm::{rms_norm_cpu, rms_norm_gpu},
-        test_utils::{assert_close, random_f32},
+        test_utils::assert_close,
+        util::random_f32,
     };
 
     #[test]

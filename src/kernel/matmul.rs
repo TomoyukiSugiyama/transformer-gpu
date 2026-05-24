@@ -126,7 +126,7 @@ pub fn matmul_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{assert_close, random_f32};
+    use crate::{test_utils::assert_close, util::random_f32};
 
     #[test]
     fn test_matmul_identity() {

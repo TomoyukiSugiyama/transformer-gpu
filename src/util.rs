@@ -59,3 +59,13 @@ pub fn concat_columns_into(
 
     out
 }
+
+use rand::rngs::StdRng;
+use rand::{RngExt, SeedableRng};
+
+pub fn random_f32(len: usize, seed: u64) -> Vec<f32> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    (0..len)
+        .map(|_| rng.random_range(-1.0f32..1.0f32))
+        .collect()
+}

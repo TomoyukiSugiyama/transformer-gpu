@@ -1,3 +1,3 @@
-pub mod transformer_block;
+mod language_model;
 mod multi_head_attention;
-mod language_model; // G-1-6
+pub mod transformer_block; // G-1-6

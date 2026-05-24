@@ -189,7 +189,8 @@ mod test {
     use crate::{
         gpu_context::GpuContext,
         kernel::swiglu::{swiglu_cpu, swiglu_gpu},
-        test_utils::{assert_close, random_f32},
+        test_utils::assert_close,
+        util::random_f32,
     };
 
     #[test]

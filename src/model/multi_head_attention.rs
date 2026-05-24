@@ -1,4 +1,8 @@
-use crate::{gpu_context::GpuContext, kernel::{attention::attention_gpu, matmul::matmul_gpu, rope::rope_gpu}, util::{concat_columns_into, split_columns}};
+use crate::{
+    gpu_context::GpuContext,
+    kernel::{attention::attention_gpu, matmul::matmul_gpu, rope::rope_gpu},
+    util::{concat_columns_into, split_columns},
+};
 
 pub fn multi_head_attention_gpu(
     ctx: &GpuContext,
@@ -124,7 +128,11 @@ pub fn multi_head_attention_cpu(
 #[cfg(test)]
 mod test {
     use crate::{
-        gpu_context::GpuContext, kernel::rope::create_table, model::multi_head_attention::{multi_head_attention_cpu, multi_head_attention_gpu}, test_utils::{assert_close, random_f32}
+        gpu_context::GpuContext,
+        kernel::rope::create_table,
+        model::multi_head_attention::{multi_head_attention_cpu, multi_head_attention_gpu},
+        test_utils::assert_close,
+        util::random_f32,
     };
 
     #[test]
