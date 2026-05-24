@@ -135,9 +135,7 @@ mod test {
         let gpu = residual_add_gpu(&ctx, &x1, &x2);
         let exp: Vec<f32> = vec![3.0, 3.0];
 
-        assert_eq!(cpu[0], exp[0]);
-        assert_eq!(cpu[1], exp[1]);
-        assert_eq!(gpu[0], exp[0]);
-        assert_eq!(gpu[1], exp[1]);
+        assert_eq!(cpu, exp);
+        assert_eq!(gpu, exp);
     }
 }

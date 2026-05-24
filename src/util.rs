@@ -85,10 +85,7 @@ mod test {
 
         assert_eq!(out.len(), exp.len());
         assert_eq!(out[0].len(), exp[0].len());
-
-        out.iter()
-            .zip(exp.iter())
-            .for_each(|(o, e)| assert_eq!(o, e));
+        assert_eq!(out, exp);
     }
 
     #[test]
@@ -102,10 +99,7 @@ mod test {
         let exp: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
 
         assert_eq!(out.len(), exp.len());
-
-        out.iter()
-            .zip(exp.iter())
-            .for_each(|(o, e)| assert_eq!(o, e));
+        assert_eq!(out, exp);
     }
 
     #[test]
