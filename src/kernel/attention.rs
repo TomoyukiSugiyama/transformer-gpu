@@ -14,7 +14,9 @@ pub fn attention_gpu(
 ) -> Vec<f32> {
     assert!(
         d_head <= MAX_D_HEAD,
-        "d_head({d_head}) exceeds MAX_D_HEAD({MAX_D_HEAD})."
+        "d_head={} exceeds MAX_D_HEAD={}",
+        d_head,
+        MAX_D_HEAD
     );
     assert_eq!(q.len(), (seq * d_head) as usize, "q must be seq×d_head");
     assert_eq!(k.len(), (seq * d_head) as usize, "k must be seq×d_head");
