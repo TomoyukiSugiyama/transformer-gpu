@@ -40,6 +40,7 @@ src/
 |   |-- mod.rs
 |   |-- multi_head_attention.rs
 |   `-- transformer_block.rs
+|-- model_config.rs
 |-- shader/     # WGSL: GPU 上で動く計算本体
 |   |-- attention.wgsl
 |   |-- flash_attention.wgsl
