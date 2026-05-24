@@ -22,15 +22,3 @@ pub fn assert_close(gpu: &[f32], cpu: &[f32], rel_eps: f32, abs_eps: f32) {
     }
     println!("max_rel_err = {max_err:.2e}  [PASS]");
 }
-
-pub fn gpu_context() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .unwrap();
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits::downlevel_defaults(),
-        ..Default::default()
-    }))
-    .unwrap()
-}

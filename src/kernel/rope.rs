@@ -1,5 +1,7 @@
 use wgpu::util::DeviceExt;
 
+use crate::gpu_context::GpuContext;
+
 pub fn create_table(d_head: usize, max_len: usize, base: f32) -> (Vec<f32>, Vec<f32>) {
     let half = d_head / 2;
     let mut cos_table: Vec<f32> = vec![0.0; max_len * half];
@@ -16,8 +18,7 @@ pub fn create_table(d_head: usize, max_len: usize, base: f32) -> (Vec<f32>, Vec<
 }
 
 pub fn rope_gpu(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    ctx: &GpuContext,
     x: &[f32],
     d_head: usize,
     cos_table: &[f32],
@@ -43,22 +44,28 @@ pub fn rope_gpu(
     );
     let size = x.len() as u32;
     let byte_size = (size * 4) as u64;
-    let buf_x = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("x"),
-        contents: bytemuck::cast_slice(&x),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let buf_cos_table = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("cos_table"),
-        contents: bytemuck::cast_slice(&cos_table),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let buf_sin_table = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("sin_table"),
-        contents: bytemuck::cast_slice(&sin_table),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let buf_out = device.create_buffer(&wgpu::BufferDescriptor {
+    let buf_x = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("x"),
+            contents: bytemuck::cast_slice(&x),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let buf_cos_table = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("cos_table"),
+            contents: bytemuck::cast_slice(&cos_table),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let buf_sin_table = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sin_table"),
+            contents: bytemuck::cast_slice(&sin_table),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let buf_out = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("out"),
         size: byte_size,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -66,23 +73,29 @@ pub fn rope_gpu(
     });
 
     let dims_padded: [u32; 4] = [d_head as u32, 0, 0, 0];
-    let buf_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("dims"),
-        contents: bytemuck::cast_slice(&dims_padded),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
+    let buf_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
-    let module = device.create_shader_module(wgpu::include_wgsl!("../shader/rope.wgsl"));
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("rope"),
-        layout: None,
-        module: &module,
-        entry_point: Some("rope"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    });
+    let module = ctx
+        .device
+        .create_shader_module(wgpu::include_wgsl!("../shader/rope.wgsl"));
+    let pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("rope"),
+            layout: None,
+            module: &module,
+            entry_point: Some("rope"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
@@ -109,8 +122,9 @@ pub fn rope_gpu(
         ],
     });
 
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -125,19 +139,21 @@ pub fn rope_gpu(
         pass.dispatch_workgroups(num_pos, 1, 1);
     }
 
-    let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
+    let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: byte_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     encoder.copy_buffer_to_buffer(&buf_out, 0, &buf_read, 0, byte_size);
-    queue.submit([encoder.finish()]);
+    ctx.queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
 
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    ctx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
 
     let data = slice.get_mapped_range();
     bytemuck::allocation::pod_collect_to_vec(&data)
@@ -188,8 +204,9 @@ pub fn rope_cpu(x: &[f32], d_head: usize, cos_table: &[f32], sin_table: &[f32]) 
 #[cfg(test)]
 mod test {
     use crate::{
+        gpu_context::GpuContext,
         kernel::rope::{create_table, rope_cpu, rope_gpu},
-        test_utils::{assert_close, gpu_context, random_f32},
+        test_utils::{assert_close, random_f32},
     };
 
     #[test]
@@ -201,8 +218,8 @@ mod test {
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
         let cpu = rope_cpu(&x, d_head, &cos_table, &sin_table);
-        let (device, queue) = gpu_context();
-        let gpu = rope_gpu(&device, &queue, &x, d_head, &cos_table, &sin_table);
+        let ctx = GpuContext::new();
+        let gpu = rope_gpu(&ctx, &x, d_head, &cos_table, &sin_table);
 
         cpu.iter()
             .zip(x.iter())
@@ -257,8 +274,8 @@ mod test {
         let exp = vec![0.0, 0.0, 0.0, 0.0, -1.14263, 1.92207, 2.95985, 4.02979];
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
         let cpu = rope_cpu(&x, d_head, &cos_table, &sin_table);
-        let (device, queue) = gpu_context();
-        let gpu = rope_gpu(&device, &queue, &x, d_head, &cos_table, &sin_table);
+        let ctx = GpuContext::new();
+        let gpu = rope_gpu(&ctx, &x, d_head, &cos_table, &sin_table);
 
         cpu.iter()
             .zip(exp.iter())
@@ -293,11 +310,11 @@ mod test {
         let d_head = 64;
         let max_len = 128;
         let base: f32 = 10000.0;
-        let x: Vec<f32> = random_f32(seq*d_head, 33);
+        let x: Vec<f32> = random_f32(seq * d_head, 33);
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
         let cpu = rope_cpu(&x, d_head, &cos_table, &sin_table);
-        let (device, queue) = gpu_context();
-        let gpu = rope_gpu(&device, &queue, &x, d_head, &cos_table, &sin_table);
+        let ctx = GpuContext::new();
+        let gpu = rope_gpu(&ctx, &x, d_head, &cos_table, &sin_table);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }

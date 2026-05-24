@@ -1,28 +1,26 @@
 use wgpu::util::DeviceExt;
 
+use crate::gpu_context::GpuContext;
+
 const TILE: u32 = 16;
 
-pub fn matmul_gpu(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    a: &[f32],
-    b: &[f32],
-    m: u32,
-    k: u32,
-    n: u32,
-) -> Vec<f32> {
+pub fn matmul_gpu(ctx: &GpuContext, a: &[f32], b: &[f32], m: u32, k: u32, n: u32) -> Vec<f32> {
     let byte_size = (m * n * 4) as u64;
-    let buf_a = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("A"),
-        contents: bytemuck::cast_slice(&a),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let buf_b = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("B"),
-        contents: bytemuck::cast_slice(&b),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let buf_c = device.create_buffer(&wgpu::BufferDescriptor {
+    let buf_a = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("A"),
+            contents: bytemuck::cast_slice(&a),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let buf_b = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("B"),
+            contents: bytemuck::cast_slice(&b),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let buf_c = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("C"),
         size: byte_size,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -30,23 +28,29 @@ pub fn matmul_gpu(
     });
 
     let dims_padded: [u32; 4] = [m, k, n, 0];
-    let buf_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("dims"),
-        contents: bytemuck::cast_slice(&dims_padded),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
+    let buf_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
-    let module = device.create_shader_module(wgpu::include_wgsl!("../shader/matmul.wgsl"));
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("matmul"),
-        layout: None,
-        module: &module,
-        entry_point: Some("matmul"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    });
+    let module = ctx
+        .device
+        .create_shader_module(wgpu::include_wgsl!("../shader/matmul.wgsl"));
+    let pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("matmul"),
+            layout: None,
+            module: &module,
+            entry_point: Some("matmul"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
@@ -69,8 +73,9 @@ pub fn matmul_gpu(
         ],
     });
 
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -84,19 +89,21 @@ pub fn matmul_gpu(
         pass.dispatch_workgroups(n.div_ceil(TILE), m.div_ceil(TILE), 1);
     }
 
-    let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
+    let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: byte_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     encoder.copy_buffer_to_buffer(&buf_c, 0, &buf_read, 0, byte_size);
-    queue.submit([encoder.finish()]);
+    ctx.queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
 
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    ctx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
 
     let data = slice.get_mapped_range();
     bytemuck::allocation::pod_collect_to_vec(&data)
@@ -119,17 +126,17 @@ pub fn matmul_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{assert_close, gpu_context, random_f32};
+    use crate::test_utils::{assert_close, random_f32};
 
     #[test]
     fn test_matmul_identity() {
-        let (device, queue) = gpu_context();
+        let ctx = GpuContext::new();
         let (m, k, n) = (4, 4, 4);
         let a: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let eye: Vec<f32> = (0..16)
             .map(|i| if i / 4 == i % 4 { 1.0 } else { 0.0 })
             .collect();
-        let gpu = matmul_gpu(&device, &queue, &a, &eye, m as u32, k as u32, n as u32);
+        let gpu = matmul_gpu(&ctx, &a, &eye, m as u32, k as u32, n as u32);
         assert_close(&gpu, &a, 1e-4, 1e-5);
     }
 
@@ -141,8 +148,8 @@ mod tests {
         let b = random_f32(k * n, 43);
 
         let cpu = matmul_cpu(&a, &b, m, k, n);
-        let (device, queue) = gpu_context();
-        let gpu = matmul_gpu(&device, &queue, &a, &b, m as u32, k as u32, n as u32);
+        let ctx = GpuContext::new();
+        let gpu = matmul_gpu(&ctx, &a, &b, m as u32, k as u32, n as u32);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
@@ -154,8 +161,8 @@ mod tests {
         let b = random_f32(k * n, 2);
 
         let cpu = matmul_cpu(&a, &b, m, k, n);
-        let (device, queue) = gpu_context();
-        let gpu = matmul_gpu(&device, &queue, &a, &b, m as u32, k as u32, n as u32);
+        let ctx = GpuContext::new();
+        let gpu = matmul_gpu(&ctx, &a, &b, m as u32, k as u32, n as u32);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-6);
     }

@@ -1,11 +1,12 @@
 use wgpu::util::DeviceExt;
 
+use crate::gpu_context::GpuContext;
+
 const BR: u32 = 64;
 const MAX_D_HEAD: u32 = 128;
 
 pub fn attention_gpu(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    ctx: &GpuContext,
     q: &[f32],
     k: &[f32],
     v: &[f32],
@@ -22,24 +23,30 @@ pub fn attention_gpu(
     assert_eq!(k.len(), (seq * d_head) as usize, "k must be seq×d_head");
     assert_eq!(v.len(), (seq * d_head) as usize, "v must be seq×d_head");
     let byte_size = (seq * d_head * 4) as u64;
-    let fa_q = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("fa_q"),
-        contents: bytemuck::cast_slice(&q),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let fa_k = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("fa_k"),
-        contents: bytemuck::cast_slice(&k),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let fa_q = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("fa_q"),
+            contents: bytemuck::cast_slice(&q),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let fa_k = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("fa_k"),
+            contents: bytemuck::cast_slice(&k),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
-    let fa_v = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("fa_v"),
-        contents: bytemuck::cast_slice(&v),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let fa_v = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("fa_v"),
+            contents: bytemuck::cast_slice(&v),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
-    let fa_score = device.create_buffer(&wgpu::BufferDescriptor {
+    let fa_score = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("fa_score"),
         size: byte_size,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -47,23 +54,29 @@ pub fn attention_gpu(
     });
 
     let dims_padded: [u32; 4] = [seq, d_head, 0, 0];
-    let fa_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("fa_dims"),
-        contents: bytemuck::cast_slice(&dims_padded),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
+    let fa_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("fa_dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
-    let module = device.create_shader_module(wgpu::include_wgsl!("../shader/flash_attention.wgsl"));
-    let fa_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("flash_attention"),
-        layout: None,
-        module: &module,
-        entry_point: Some("flash_attention"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    });
+    let module = ctx
+        .device
+        .create_shader_module(wgpu::include_wgsl!("../shader/flash_attention.wgsl"));
+    let fa_pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("flash_attention"),
+            layout: None,
+            module: &module,
+            entry_point: Some("flash_attention"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
 
-    let fa_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let fa_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &fa_pipeline.get_bind_group_layout(0),
         entries: &[
@@ -90,8 +103,9 @@ pub fn attention_gpu(
         ],
     });
 
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -104,19 +118,21 @@ pub fn attention_gpu(
         pass.dispatch_workgroups(seq.div_ceil(BR), 1, 1);
     }
 
-    let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
+    let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: byte_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     encoder.copy_buffer_to_buffer(&fa_score, 0, &buf_read, 0, byte_size);
-    queue.submit([encoder.finish()]);
+    ctx.queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
 
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    ctx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
 
     let data = slice.get_mapped_range();
     bytemuck::allocation::pod_collect_to_vec(&data)
@@ -169,7 +185,7 @@ pub fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize)
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::{assert_close, gpu_context, random_f32};
+    use crate::test_utils::{assert_close, random_f32};
 
     #[test]
     fn test_softmax_row_sum() {
@@ -180,8 +196,8 @@ mod test {
         let v: Vec<f32> = vec![4.0];
 
         let cpu = attention_cpu(&q, &k, &v, seq, d_head);
-        let (device, queue) = gpu_context();
-        let gpu = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
+        let ctx = GpuContext::new();
+        let gpu = attention_gpu(&ctx, &q, &k, &v, seq as u32, d_head as u32);
 
         // 1 / √d_k
         // => 1.0 / √1 = 1.0
@@ -204,8 +220,8 @@ mod test {
         let k: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0];
         let v: Vec<f32> = vec![0.0, 1.0, 1.0, 1.0];
         let cpu = attention_cpu(&q, &k, &v, seq, d_head);
-        let (device, queue) = gpu_context();
-        let gpu = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
+        let ctx = GpuContext::new();
+        let gpu = attention_gpu(&ctx, &q, &k, &v, seq as u32, d_head as u32);
 
         // q            k           v
         // | 1.0 0.0 | | 1.0 1.0 | | 0.0 1.0 |
@@ -270,8 +286,8 @@ mod test {
         let k: Vec<f32> = random_f32(seq * d_head, 33);
         let v: Vec<f32> = random_f32(seq * d_head, 34);
         let cpu = attention_cpu(&q, &k, &v, seq, d_head);
-        let (device, queue) = gpu_context();
-        let gpu = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
+        let ctx = GpuContext::new();
+        let gpu = attention_gpu(&ctx, &q, &k, &v, seq as u32, d_head as u32);
 
         assert_eq!(cpu.len(), seq * d_head);
         assert_eq!(gpu.len(), seq * d_head);
@@ -286,8 +302,8 @@ mod test {
         let k: Vec<f32> = random_f32(seq * d_head, 43);
         let v: Vec<f32> = random_f32(seq * d_head, 44);
         let cpu = attention_cpu(&q, &k, &v, seq, d_head);
-        let (device, queue) = gpu_context();
-        let gpu = attention_gpu(&device, &queue, &q, &k, &v, seq as u32, d_head as u32);
+        let ctx = GpuContext::new();
+        let gpu = attention_gpu(&ctx, &q, &k, &v, seq as u32, d_head as u32);
 
         assert_eq!(cpu.len(), seq * d_head);
         assert_eq!(gpu.len(), seq * d_head);

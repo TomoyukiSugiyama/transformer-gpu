@@ -1,10 +1,11 @@
 use wgpu::util::DeviceExt;
 
+use crate::gpu_context::GpuContext;
+
 const WG: u32 = 256;
 
 pub fn rms_norm_gpu(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    ctx: &GpuContext,
     x: &[f32],
     gamma: &[f32],
     eps: f32,
@@ -23,17 +24,21 @@ pub fn rms_norm_gpu(
     );
     let seq = x.len() as u32 / d_model;
     let byte_size = (seq * d_model * 4) as u64;
-    let buf_x = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("x"),
-        contents: bytemuck::cast_slice(&x),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let buf_gamma = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("gamma"),
-        contents: bytemuck::cast_slice(&gamma),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let buf_out = device.create_buffer(&wgpu::BufferDescriptor {
+    let buf_x = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("x"),
+            contents: bytemuck::cast_slice(&x),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let buf_gamma = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gamma"),
+            contents: bytemuck::cast_slice(&gamma),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let buf_out = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("out"),
         size: byte_size,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -41,23 +46,29 @@ pub fn rms_norm_gpu(
     });
 
     let dims_padded: [u32; 4] = [d_model as u32, eps.to_bits(), 0, 0];
-    let buf_dims = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("dims"),
-        contents: bytemuck::cast_slice(&dims_padded),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
+    let buf_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
-    let module = device.create_shader_module(wgpu::include_wgsl!("../shader/rms_norm.wgsl"));
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("rms_norm"),
-        layout: None,
-        module: &module,
-        entry_point: Some("rms_norm"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    });
+    let module = ctx
+        .device
+        .create_shader_module(wgpu::include_wgsl!("../shader/rms_norm.wgsl"));
+    let pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("rms_norm"),
+            layout: None,
+            module: &module,
+            entry_point: Some("rms_norm"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
@@ -80,8 +91,9 @@ pub fn rms_norm_gpu(
         ],
     });
 
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -95,19 +107,21 @@ pub fn rms_norm_gpu(
         pass.dispatch_workgroups(seq, 1, 1);
     }
 
-    let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
+    let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: byte_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     encoder.copy_buffer_to_buffer(&buf_out, 0, &buf_read, 0, byte_size);
-    queue.submit([encoder.finish()]);
+    ctx.queue.submit([encoder.finish()]);
 
     let slice = buf_read.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
 
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    ctx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
 
     let data = slice.get_mapped_range();
     bytemuck::allocation::pod_collect_to_vec(&data)
@@ -138,8 +152,9 @@ pub fn rms_norm_cpu(x: &[f32], gamma: &[f32], eps: f32, d_model: usize) -> Vec<f
 #[cfg(test)]
 mod test {
     use crate::{
+        gpu_context::GpuContext,
         kernel::rms_norm::{rms_norm_cpu, rms_norm_gpu},
-        test_utils::{assert_close, gpu_context, random_f32},
+        test_utils::{assert_close, random_f32},
     };
 
     #[test]
@@ -149,8 +164,8 @@ mod test {
         let gamma: Vec<f32> = vec![3.0, 3.0];
         let d_model = 2;
         let cpu = rms_norm_cpu(&x, &gamma, eps, d_model);
-        let (device, queue) = gpu_context();
-        let gpu = rms_norm_gpu(&device, &queue, &x, &gamma, eps, d_model as u32);
+        let ctx = GpuContext::new();
+        let gpu = rms_norm_gpu(&ctx, &x, &gamma, eps, d_model as u32);
 
         // rms = √(sum(x^2)/d + ε)
         // √((1.0*1.0+2.0*2.0)/2 + 1.5) = 2.0
@@ -174,8 +189,8 @@ mod test {
         let eps = 1e-6;
         let x = random_f32(len, 42);
         let cpu = rms_norm_cpu(&x, &gamma, eps, d_model);
-        let (device, queue) = gpu_context();
-        let gpu = rms_norm_gpu(&device, &queue, &x, &gamma, eps, d_model as u32);
+        let ctx = GpuContext::new();
+        let gpu = rms_norm_gpu(&ctx, &x, &gamma, eps, d_model as u32);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }

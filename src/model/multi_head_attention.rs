@@ -1,8 +1,7 @@
-use crate::kernel::{attention::attention_gpu, matmul::matmul_gpu, rope::rope_gpu};
+use crate::{gpu_context::GpuContext, kernel::{attention::attention_gpu, matmul::matmul_gpu, rope::rope_gpu}};
 
 pub fn multi_head_attention_gpu(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    ctx: &GpuContext,
     seq: u32,
     d_model: u32,
     n_heads: u32,
@@ -21,27 +20,26 @@ pub fn multi_head_attention_gpu(
     assert!(n_heads > 0, "n_heads must be > 0");
     let d_head = d_model / n_heads;
 
-    let q = matmul_gpu(device, queue, x, w_q, seq, d_model, d_model);
-    let k = matmul_gpu(device, queue, x, w_k, seq, d_model, d_model);
-    let v = matmul_gpu(device, queue, x, w_v, seq, d_model, d_model);
+    let q = matmul_gpu(ctx, x, w_q, seq, d_model, d_model);
+    let k = matmul_gpu(ctx, x, w_k, seq, d_model, d_model);
+    let v = matmul_gpu(ctx, x, w_v, seq, d_model, d_model);
     let q_heads = split_columns(&q, d_model as usize, d_head as usize, n_heads as usize);
     let k_heads = split_columns(&k, d_model as usize, d_head as usize, n_heads as usize);
     let v_heads = split_columns(&v, d_model as usize, d_head as usize, n_heads as usize);
 
     let q_heads: Vec<Vec<f32>> = q_heads
         .iter()
-        .map(|q| rope_gpu(device, queue, q, d_head as usize, &cos_table, &sin_table))
+        .map(|q| rope_gpu(ctx, q, d_head as usize, &cos_table, &sin_table))
         .collect();
     let k_heads: Vec<Vec<f32>> = k_heads
         .iter()
-        .map(|k| rope_gpu(device, queue, k, d_head as usize, &cos_table, &sin_table))
+        .map(|k| rope_gpu(ctx, k, d_head as usize, &cos_table, &sin_table))
         .collect();
 
     let mut attn = Vec::with_capacity(n_heads as usize);
     for i in 0..n_heads as usize {
         attn.push(attention_gpu(
-            device,
-            queue,
+            ctx,
             &q_heads[i],
             &k_heads[i],
             &v_heads[i],
@@ -58,7 +56,7 @@ pub fn multi_head_attention_gpu(
         n_heads as usize,
     );
 
-    matmul_gpu(device, queue, &attn, w_o, seq, d_model, d_model)
+    matmul_gpu(ctx, &attn, w_o, seq, d_model, d_model)
 }
 
 pub fn split_columns(x: &[f32], d_model: usize, d_head: usize, n_heads: usize) -> Vec<Vec<f32>> {
@@ -103,7 +101,6 @@ pub fn concat_columns_into(
         parts.len(),
         n_heads
     );
-    assert!(parts.len() > 0, "parts.len() is empty",);
     assert_eq!(
         parts[0].len(),
         seq * d_head,
@@ -189,9 +186,7 @@ pub fn multi_head_attention_cpu(
 #[cfg(test)]
 mod test {
     use crate::{
-        kernel::rope::create_table,
-        model::multi_head_attention::{multi_head_attention_cpu, multi_head_attention_gpu},
-        test_utils::{assert_close, gpu_context, random_f32},
+        gpu_context::GpuContext, kernel::rope::create_table, model::multi_head_attention::{multi_head_attention_cpu, multi_head_attention_gpu}, test_utils::{assert_close, random_f32}
     };
 
     #[test]
@@ -211,10 +206,9 @@ mod test {
         let cpu = multi_head_attention_cpu(
             seq, d_model, n_heads, &x, &w_q, &w_k, &w_v, &w_o, &cos_table, &sin_table,
         );
-        let (device, queue) = gpu_context();
+        let ctx = GpuContext::new();
         let gpu = multi_head_attention_gpu(
-            &device,
-            &queue,
+            &ctx,
             seq as u32,
             d_model as u32,
             n_heads as u32,

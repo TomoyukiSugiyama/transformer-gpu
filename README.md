@@ -23,6 +23,7 @@ Rust で書かれた Transformer (decoder-only) 言語モデルの学習・推�
 
 ```
 src/
+|-- gpu_context.rs
 |-- kernel/     # Rust: wgpu のバッファ・パイプライン管理
 |   |-- adam_w.rs
 |   |-- attention.rs
@@ -46,7 +47,6 @@ src/
 |   |-- residual_add.wgsl
 |   |-- rms_norm.wgsl
 |   |-- rope.wgsl
-|   |-- shaders.wgsl
 |   `-- swiglu_elementwise.wgsl
 `-- test_utils.rs
 ```

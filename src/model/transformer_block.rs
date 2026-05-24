@@ -1,11 +1,11 @@
 use crate::{
+    gpu_context::GpuContext,
     kernel::{residual_add::residual_add_gpu, rms_norm::rms_norm_gpu, swiglu::swiglu_gpu},
     model::multi_head_attention::multi_head_attention_gpu,
 };
 
-fn transformer_block_gpu(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+pub fn transformer_block_gpu(
+    ctx: &GpuContext,
     seq: u32,
     d_model: u32,
     n_heads: u32,
@@ -23,23 +23,21 @@ fn transformer_block_gpu(
 ) -> Vec<f32> {
     let gamma: Vec<f32> = vec![1.0; d_model as usize];
     let eps = 1e-6;
-    let norm1 = rms_norm_gpu(&device, &queue, &x, &gamma, eps, d_model as u32);
+    let norm1 = rms_norm_gpu(&ctx, &x, &gamma, eps, d_model as u32);
     let mha = multi_head_attention_gpu(
-        &device, &queue, seq, d_model, n_heads, &norm1, w_q, w_k, w_v, w_o, cos_table, sin_table,
+        &ctx, seq, d_model, n_heads, &norm1, w_q, w_k, w_v, w_o, cos_table, sin_table,
     );
-    let add = residual_add_gpu(&device, &queue, x, &mha);
-    let norm2 = rms_norm_gpu(&device, &queue, &add, &gamma, eps, d_model as u32);
-    let ffn = swiglu_gpu(
-        &device, &queue, &norm2, w_gate, w_up, w_down, seq, d_model, d_ff,
-    );
-    let out = residual_add_gpu(&device, &queue, &add, &ffn);
+    let add = residual_add_gpu(&ctx, x, &mha);
+    let norm2 = rms_norm_gpu(&ctx, &add, &gamma, eps, d_model as u32);
+    let ffn = swiglu_gpu(&ctx, &norm2, w_gate, w_up, w_down, seq, d_model, d_ff);
+    let out = residual_add_gpu(&ctx, &add, &ffn);
 
     out
 }
 
 // CPU リファレンス
 #[cfg(test)]
-fn transformer_block_cpu(
+pub fn transformer_block_cpu(
     seq: usize,
     d_model: usize,
     n_heads: usize,
@@ -76,9 +74,10 @@ fn transformer_block_cpu(
 #[cfg(test)]
 mod test {
     use crate::{
+        gpu_context::GpuContext,
         kernel::rope::create_table,
         model::transformer_block::{transformer_block_cpu, transformer_block_gpu},
-        test_utils::{assert_close, gpu_context, random_f32},
+        test_utils::{assert_close, random_f32},
     };
 
     #[test]
@@ -100,14 +99,13 @@ mod test {
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
 
-        let (device, queue) = gpu_context();
+        let ctx = GpuContext::new();
         let cpu = transformer_block_cpu(
             seq, d_model, n_heads, d_ff, &x, &w_q, &w_k, &w_v, &w_o, &w_gate, &w_up, &w_down,
             &cos_table, &sin_table,
         );
         let gpu = transformer_block_gpu(
-            &device,
-            &queue,
+            &ctx,
             seq as u32,
             d_model as u32,
             n_heads as u32,
