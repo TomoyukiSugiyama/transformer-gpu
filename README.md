@@ -44,6 +44,7 @@ src/
 |   |-- residual_add.wgsl
 |   |-- rms_norm.wgsl
 |   |-- rope.wgsl
-|   `-- shaders.wgsl
+|   |-- shaders.wgsl
+|   `-- swiglu_elementwise.wgsl
 `-- test_utils.rs
 ```

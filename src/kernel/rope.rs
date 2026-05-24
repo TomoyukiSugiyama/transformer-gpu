@@ -189,7 +189,7 @@ fn rope_cpu(x: &[f32], d_head: usize, cos_table: &[f32], sin_table: &[f32]) -> V
 mod test {
     use crate::{
         kernel::rope::{create_table, rope_cpu, rope_gpu},
-        test_utils::gpu_context,
+        test_utils::{assert_close, gpu_context, random_f32},
     };
 
     #[test]
@@ -285,5 +285,20 @@ mod test {
                     e
                 );
             });
+    }
+
+    #[test]
+    fn test_rope_random() {
+        let seq: usize = 4;
+        let d_head = 64;
+        let max_len = 128;
+        let base: f32 = 10000.0;
+        let x: Vec<f32> = random_f32(seq*d_head, 33);
+        let (cos_table, sin_table) = create_table(d_head, max_len, base);
+        let cpu = rope_cpu(&x, d_head, &cos_table, &sin_table);
+        let (device, queue) = gpu_context();
+        let gpu = rope_gpu(&device, &queue, &x, d_head, &cos_table, &sin_table);
+
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 }

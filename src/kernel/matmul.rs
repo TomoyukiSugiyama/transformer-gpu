@@ -81,7 +81,7 @@ pub fn matmul_gpu(
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
-        pass.dispatch_workgroups(m.div_ceil(TILE), n.div_ceil(TILE), 1);
+        pass.dispatch_workgroups(n.div_ceil(TILE), m.div_ceil(TILE), 1);
     }
 
     let buf_read = device.create_buffer(&wgpu::BufferDescriptor {
@@ -104,7 +104,7 @@ pub fn matmul_gpu(
 
 // CPU リファレンス
 #[cfg(test)]
-fn matmul_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+pub fn matmul_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     let mut c = vec![0.0f32; m * n];
     for i in 0..m {
         for j in 0..n {

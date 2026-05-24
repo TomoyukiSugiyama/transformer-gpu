@@ -25,7 +25,7 @@ fn rms_norm(
     // i = 0 ~ (WG - 1)
     var i = lid.x;
     loop {
-        if i >= d_model { break;}
+        if i >= d_model { break; }
         let v = x[base + i];
         sum += v * v;
         i += WG; // +256
