@@ -9,16 +9,8 @@ use transformer_gpu::{
 fn bench_transformer_block(c: &mut Criterion) {
     let ctx = GpuContext::new();
     let cfg = ModelConfig {
-        vocab_size: 4096,
-        d_model: 64,
-        n_heads: 4,
-        n_kv_heads: 4,
-        d_ff: 128,
-        n_layers: 4,
         max_seq_len: 512,
-        dropout_p: 0.1,
-        eps: 1e-6,
-        rope_base: 10000.0,
+        ..Default::default()
     };
     let seq = 512usize;
     let x = random_f32(seq * cfg.d_model, 0);
