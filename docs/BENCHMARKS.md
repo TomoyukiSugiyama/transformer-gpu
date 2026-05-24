@@ -1,8 +1,8 @@
 # G-1-4b ベンチマーク追加時の結果
 
-初回: default 設定
-warm_up後 : `kernels.rs` に`warm_up_time(Duration::from_secs(3))` 追加
-measurement_time後 : `model.rs` に `warm_up_time(Duration::from_secs(3))` と `measurement_time(Duration::from_secs(10))` 追加
+- 初回: default 設定
+- warm_up後 : `kernels.rs` に`warm_up_time(Duration::from_secs(3))` 追加
+- measurement_time後 : `model.rs` に `warm_up_time(Duration::from_secs(3))` と `measurement_time(Duration::from_secs(10))` 追加
 
 | カーネル                  | 初回 Median | warm_up後 Median | measurement_time後 Median |
 | --------------------- | --------- | --------------- | ------------------------ |
@@ -11,6 +11,7 @@ measurement_time後 : `model.rs` に `warm_up_time(Duration::from_secs(3))` と 
 | transformer_block_gpu | 96.4 ms   | 85.2 ms         | 98.2 ms                  |
 
 macOS の Metal バックエンドは長時間連続実行でサーマルスロットリングが起きやすく、これが原因で悪化と考えられる。
+
 現状の判断としては warm_up_time=3s、measurement_time はデフォルト（5s）が最もノイズが少ない結果。
 
 ---

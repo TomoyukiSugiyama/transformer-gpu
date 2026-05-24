@@ -199,13 +199,7 @@ mod test {
     fn test_multi_head_attention() {
         let ctx = GpuContext::new();
         let cfg = ModelConfig {
-            d_model: 64,
-            n_heads: 4,
-            d_ff: 128,
-            n_layers: 4,
-            max_seq_len: 1024,
-            eps: 1e-6,
-            rope_base: 10000.0,
+            ..Default::default()
         };
         let mha = MultiHeadAttention::new(&cfg);
         let seq = 64usize;

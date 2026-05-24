@@ -7,13 +7,7 @@ use transformer_gpu::util::random_f32;
 fn main() {
     let ctx = GpuContext::new();
     let cfg = ModelConfig {
-        d_model: 64,
-        n_heads: 4,
-        d_ff: 128,
-        n_layers: 4,
-        max_seq_len: 1024,
-        eps: 1e-6,
-        rope_base: 10000.0,
+        ..Default::default()
     };
 
     let x: Vec<f32> = random_f32(cfg.max_seq_len * cfg.d_model, 31);

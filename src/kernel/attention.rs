@@ -4,7 +4,7 @@ use crate::gpu_context::GpuContext;
 
 const BR: u32 = 64;
 const MAX_D_HEAD: u32 = 128;
-const TILE: u32 = 16u32; // befor_flash_attention_gpu で利用する
+const TILE: u32 = 16u32; // before_flash_attention_gpu で利用する
 
 pub fn attention_gpu(
     ctx: &GpuContext,

@@ -99,13 +99,7 @@ mod test {
     fn test_transformer_block() {
         let ctx = GpuContext::new();
         let cfg = ModelConfig {
-            d_model: 64,
-            n_heads: 4,
-            d_ff: 128,
-            n_layers: 4,
-            max_seq_len: 1024,
-            eps: 1e-6,
-            rope_base: 10000.0,
+            ..Default::default()
         };
         let seq = 64usize;
         let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
@@ -124,13 +118,7 @@ mod test {
     fn test_one_seq() {
         let ctx = GpuContext::new();
         let cfg = ModelConfig {
-            d_model: 64,
-            n_heads: 4,
-            d_ff: 128,
-            n_layers: 4,
-            max_seq_len: 1024,
-            eps: 1e-6,
-            rope_base: 10000.0,
+            ..Default::default()
         };
         let seq = 1usize;
         let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
@@ -149,13 +137,8 @@ mod test {
     fn test_one_n_heads() {
         let ctx = GpuContext::new();
         let cfg = ModelConfig {
-            d_model: 64,
             n_heads: 1,
-            d_ff: 128,
-            n_layers: 4,
-            max_seq_len: 1024,
-            eps: 1e-6,
-            rope_base: 10000.0,
+            ..Default::default()
         };
         let seq = 64usize;
         let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
@@ -175,12 +158,8 @@ mod test {
         let ctx = GpuContext::new();
         let cfg = ModelConfig {
             d_model: 64,
-            n_heads: 4,
             d_ff: 64,
-            n_layers: 4,
-            max_seq_len: 1024,
-            eps: 1e-6,
-            rope_base: 10000.0,
+            ..Default::default()
         };
         let seq = 64usize;
         let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
