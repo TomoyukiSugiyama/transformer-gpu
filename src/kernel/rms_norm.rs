@@ -174,7 +174,7 @@ mod test {
         // [1.0 / 2.0 * 3.0, 2.0 / 2.0 * 3.0]
         // = [1.5, 3.0]
         let exp: Vec<f32> = vec![1.5, 3.0];
-        
+
         assert_eq!(cpu, exp);
         assert_eq!(gpu, exp);
     }
