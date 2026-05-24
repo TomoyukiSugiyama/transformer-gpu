@@ -2,7 +2,7 @@ use wgpu::util::DeviceExt;
 
 const WG: u32 = 256;
 
-fn rms_norm_gpu(
+pub fn rms_norm_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     x: &[f32],

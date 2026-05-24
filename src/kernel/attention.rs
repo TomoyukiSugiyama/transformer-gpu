@@ -124,7 +124,7 @@ pub fn attention_gpu(
 
 // CPU リファレンス
 #[cfg(test)]
-fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize) -> Vec<f32> {
+pub fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize) -> Vec<f32> {
     assert_eq!(q.len(), (seq * d_head) as usize, "q must be seq×d_head");
     assert_eq!(k.len(), (seq * d_head) as usize, "k must be seq×d_head");
     assert_eq!(v.len(), (seq * d_head) as usize, "v must be seq×d_head");

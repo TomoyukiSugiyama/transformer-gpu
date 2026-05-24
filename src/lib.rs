@@ -1,5 +1,5 @@
 
-mod kernel;
+pub mod kernel;
 pub mod model;
 
 #[cfg(test)]
