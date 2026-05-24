@@ -34,6 +34,8 @@ RMSNorm、SwiGLU FFN、Residual Add、RoPE を GPU 化。TransformerBlock 単体
 ### G-1-5 学習ループ
 backward カーネル実装、AdamW の GPU 化、loss 計算。CPU 版より複雑なので最も工数がかかるフェーズ。
 
+-> [G-1-5](g1-5.md)
+
 ### G-1-6 検証
 Phase 8a の .bin チェックポイントをロードして推論し、CPU 版と同一出力が出るかを確認する受け入れテスト。
 

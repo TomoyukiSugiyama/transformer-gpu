@@ -18,6 +18,7 @@ Rust で書かれた Transformer (decoder-only) 言語モデルの学習・推�
 | [docs/g1-2.md](docs/g1-2.md) | Matmul カーネル |
 | [docs/g1-3.md](docs/g1-3.md) | Attention カーネル |
 | [docs/g1-4.md](docs/g1-4.md) | Block 統合 |
+| [docs/g1-5.md](docs/g1-5.md) | 学習ループ |
 
 
 ## ディレクトリ構成
