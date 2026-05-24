@@ -132,6 +132,7 @@ fn swish(x: f32) -> f32 {
     x / (1.0 + (-x).exp())
 }
 
+#[cfg(test)]
 pub fn elementwise_with<F: Fn(f32, f32) -> f32>(data: &[f32], other: &[f32], f: F) -> Vec<f32> {
     assert_eq!(
         data.len(),
