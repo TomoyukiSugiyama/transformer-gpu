@@ -69,3 +69,56 @@ pub fn random_f32(len: usize, seed: u64) -> Vec<f32> {
         .map(|_| rng.random_range(-1.0f32..1.0f32))
         .collect()
 }
+
+#[cfg(test)]
+mod test {
+    use crate::util::{concat_columns_into, split_columns};
+
+    #[test]
+    fn test_split_columns() {
+        let x: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let d_model = 4;
+        let n_heads = 2;
+        let d_head = d_model / n_heads;
+        let out = split_columns(&x, d_model, d_head, n_heads);
+        let exp = vec![vec![1.0, 2.0, 5.0, 6.0], vec![3.0, 4.0, 7.0, 8.0]];
+
+        assert_eq!(out.len(), exp.len());
+        assert_eq!(out[0].len(), exp[0].len());
+
+        out.iter()
+            .zip(exp.iter())
+            .for_each(|(o, e)| assert_eq!(o, e));
+    }
+
+    #[test]
+    fn test_concat_columns_into() {
+        let x = vec![vec![1.0, 2.0, 5.0, 6.0], vec![3.0, 4.0, 7.0, 8.0]];
+        let seq = 2;
+        let d_model = 4;
+        let n_heads = 2;
+        let d_head = d_model / n_heads;
+        let out = concat_columns_into(&x, seq, d_model, d_head, n_heads);
+        let exp: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+
+        assert_eq!(out.len(), exp.len());
+
+        out.iter()
+            .zip(exp.iter())
+            .for_each(|(o, e)| assert_eq!(o, e));
+    }
+
+    #[test]
+    fn test_split_concat_roundtrip() {
+        let seq = 4;
+        let d_model = 8;
+        let n_heads = 4;
+        let d_head = d_model / n_heads;
+        let x: Vec<f32> = (0..seq * d_model).map(|i| i as f32).collect();
+
+        let heads = split_columns(&x, d_model, d_head, n_heads);
+        let reconstructed = concat_columns_into(&heads, seq, d_model, d_head, n_heads);
+
+        assert_eq!(x, reconstructed);
+    }
+}
