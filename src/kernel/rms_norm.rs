@@ -116,6 +116,8 @@ fn rms_norm_gpu(
 // CPU リファレンス
 #[cfg(test)]
 fn rms_norm_cpu(x: &[f32], gamma: &[f32], eps: f32, d_model: usize) -> Vec<f32> {
+    assert_eq!(x.len() % d_model, 0, "x.len() must be divisible by d_model");
+
     let seq = x.len() / d_model;
     let mut out = vec![0.0f32; x.len()];
 

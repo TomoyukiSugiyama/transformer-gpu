@@ -23,7 +23,24 @@ fn rope_gpu(
     cos_table: &[f32],
     sin_table: &[f32],
 ) -> Vec<f32> {
+    assert!(d_head % 2 == 0, "d_head must be even for RoPE");
     assert_eq!(x.len() % d_head, 0, "x.len() must be divisible by d_head");
+    let half = d_head / 2;
+    assert_eq!(
+        cos_table.len() % half,
+        0,
+        "cos_table.len() must be divisible by d_head/2"
+    );
+    assert_eq!(
+        sin_table.len() % half,
+        0,
+        "sin_table.len() must be divisible by d_head/2"
+    );
+    assert_eq!(
+        cos_table.len(),
+        sin_table.len(),
+        "cos_table and sin_table must have the same length"
+    );
     let size = x.len() as u32;
     let byte_size = (size * 4) as u64;
     let buf_x = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -130,6 +147,23 @@ fn rope_gpu(
 #[cfg(test)]
 fn rope_cpu(x: &[f32], d_head: usize, cos_table: &[f32], sin_table: &[f32]) -> Vec<f32> {
     assert!(d_head % 2 == 0, "d_head must be even for RoPE");
+    assert_eq!(x.len() % d_head, 0, "x.len() must be divisible by d_head");
+    let half = d_head / 2;
+    assert_eq!(
+        cos_table.len() % half,
+        0,
+        "cos_table.len() must be divisible by d_head/2"
+    );
+    assert_eq!(
+        sin_table.len() % half,
+        0,
+        "sin_table.len() must be divisible by d_head/2"
+    );
+    assert_eq!(
+        cos_table.len(),
+        sin_table.len(),
+        "cos_table and sin_table must have the same length"
+    );
     let half = d_head / 2;
     let seq = x.len() / d_head;
 

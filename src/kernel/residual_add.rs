@@ -8,6 +8,7 @@ pub fn residual_add_gpu(
     x1: &[f32],
     x2: &[f32],
 ) -> Vec<f32> {
+    assert_eq!(x1.len(), x2.len(), "x1 and x2 must have the same length");
     let size = x1.len() as u32;
     let byte_size = (size * 4) as u64;
     let buf_x1 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -103,6 +104,7 @@ pub fn residual_add_gpu(
 // CPU リファレンス
 #[cfg(test)]
 fn residual_add_cpu(x1: &[f32], x2: &[f32]) -> Vec<f32> {
+    assert_eq!(x1.len(), x2.len(), "x1 and x2 must have the same length");
     x1.iter().zip(x2.iter()).map(|(a, b)| *a + *b).collect()
 }
 

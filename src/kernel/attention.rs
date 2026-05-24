@@ -12,7 +12,13 @@ pub fn attention_gpu(
     seq: u32,
     d_head: u32,
 ) -> Vec<f32> {
-    assert!(d_head < MAX_D_HEAD, "d_head({d_head}) exceeds MAX_D_HEAD({MAX_D_HEAD}).");
+    assert!(
+        d_head <= MAX_D_HEAD,
+        "d_head({d_head}) exceeds MAX_D_HEAD({MAX_D_HEAD})."
+    );
+    assert_eq!(q.len(), (seq * d_head) as usize, "q must be seq×d_head");
+    assert_eq!(k.len(), (seq * d_head) as usize, "k must be seq×d_head");
+    assert_eq!(v.len(), (seq * d_head) as usize, "v must be seq×d_head");
     let byte_size = (seq * d_head * 4) as u64;
     let fa_q = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fa_q"),
@@ -117,6 +123,10 @@ pub fn attention_gpu(
 // CPU リファレンス
 #[cfg(test)]
 fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, d_head: usize) -> Vec<f32> {
+    assert_eq!(q.len(), (seq * d_head) as usize, "q must be seq×d_head");
+    assert_eq!(k.len(), (seq * d_head) as usize, "k must be seq×d_head");
+    assert_eq!(v.len(), (seq * d_head) as usize, "v must be seq×d_head");
+
     // 1 / √d_k
     let scale = 1.0 / (d_head as f32).sqrt();
 
