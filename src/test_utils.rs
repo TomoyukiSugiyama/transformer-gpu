@@ -12,3 +12,13 @@ pub fn assert_close(gpu: &[f32], cpu: &[f32], rel_eps: f32, abs_eps: f32) {
     }
     println!("max_rel_err = {max_err:.2e}  [PASS]");
 }
+
+use rand::rngs::StdRng;
+use rand::{RngExt, SeedableRng};
+
+pub fn random_token_ids(len: usize, vocab_size: usize, seed: u64) -> Vec<u32> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    (0..len)
+        .map(|_| rng.random_range(0..vocab_size as u32))
+        .collect()
+}

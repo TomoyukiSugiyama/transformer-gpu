@@ -128,7 +128,10 @@ pub fn embedding_cpu(token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f
 
 #[cfg(test)]
 mod test {
-    use crate::{gpu_context::GpuContext, kernel::embedding::{embedding_cpu, embedding_gpu}};
+    use crate::{
+        gpu_context::GpuContext,
+        kernel::embedding::{embedding_cpu, embedding_gpu},
+    };
 
     #[test]
     fn test_embedding() {
@@ -138,8 +141,7 @@ mod test {
 
         let cpu = embedding_cpu(&token_ids, &weight, d_model);
         let ctx = GpuContext::new();
-        let gpu = embedding_gpu(&ctx,&token_ids, &weight, d_model);
-
+        let gpu = embedding_gpu(&ctx, &token_ids, &weight, d_model);
 
         let exp = vec![3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
 
