@@ -29,6 +29,7 @@ src/
 |-- kernel/     # Rust: wgpu のバッファ・パイプライン管理
 |   |-- adam_w.rs
 |   |-- attention.rs
+|   |-- cross_entropy_loss.rs
 |   |-- matmul.rs
 |   |-- mod.rs
 |   |-- residual_add.rs
@@ -45,6 +46,7 @@ src/
 |-- model_config.rs
 |-- shader/     # WGSL: GPU 上で動く計算本体
 |   |-- attention.wgsl
+|   |-- cross_entropy_loss.wgsl
 |   |-- flash_attention.wgsl
 |   |-- matmul.wgsl
 |   |-- residual_add.wgsl

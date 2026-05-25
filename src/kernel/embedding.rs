@@ -47,10 +47,10 @@ pub fn embedding_gpu(
     let pipeline = ctx
         .device
         .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("residual_add"),
+            label: Some("embedding"),
             layout: None,
             module: &module,
-            entry_point: Some("residual_add"),
+            entry_point: Some("embedding"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
