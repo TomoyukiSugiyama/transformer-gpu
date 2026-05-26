@@ -3,12 +3,7 @@ use wgpu::util::DeviceExt;
 
 const SIZE: u32 = 256;
 
-pub fn embedding_gpu(
-    ctx: &GpuContext,
-    token_ids: &[u32],
-    weight: &[f32],
-    d_model: usize,
-) -> Vec<f32> {
+pub fn embedding(ctx: &GpuContext, token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f32> {
     let size = (token_ids.len() * d_model) as u32;
     let byte_size = (size * 4) as u64;
     let buf_token_ids = ctx
@@ -130,7 +125,7 @@ pub fn embedding_cpu(token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f
 mod test {
     use crate::{
         gpu_context::GpuContext,
-        kernel::embedding::{embedding_cpu, embedding_gpu},
+        kernel::embedding::{embedding, embedding_cpu},
     };
 
     #[test]
@@ -141,7 +136,7 @@ mod test {
 
         let cpu = embedding_cpu(&token_ids, &weight, d_model);
         let ctx = GpuContext::new();
-        let gpu = embedding_gpu(&ctx, &token_ids, &weight, d_model);
+        let gpu = embedding(&ctx, &token_ids, &weight, d_model);
 
         let exp = vec![3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
 

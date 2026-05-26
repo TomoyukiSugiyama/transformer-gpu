@@ -35,10 +35,11 @@ src/
 |   |-- residual_add.rs
 |   |-- rms_norm.rs
 |   |-- rope.rs
-|   `-- swiglu.rs
+|   `-- swiglu_elementwise.rs
 |-- lib.rs
 |-- main.rs
 |-- model/      # Transformer のブロック構成（kernel を組み合わせる）
+|   |-- ffn.rs
 |   |-- language_model.rs
 |   |-- mod.rs
 |   |-- multi_head_attention.rs

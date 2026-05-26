@@ -4,9 +4,9 @@ use crate::gpu_context::GpuContext;
 
 const BR: u32 = 64;
 const MAX_D_HEAD: u32 = 128;
-const TILE: u32 = 16u32; // before_flash_attention_gpu で利用する
+const TILE: u32 = 16u32; // before_flash_attention で利用する
 
-pub fn attention_gpu(
+pub fn attention(
     ctx: &GpuContext,
     q: &[f32],
     k: &[f32],
@@ -141,7 +141,7 @@ pub fn attention_gpu(
 
 /// Flash Attention 導入前の実装、ベンチで利用
 #[allow(dead_code)]
-pub fn before_flash_attention_gpu(
+pub fn before_flash_attention(
     ctx: &GpuContext,
     q: &[f32],
     k: &[f32],
@@ -420,7 +420,7 @@ mod test {
 
         let cpu = attention_cpu(&q, &k, &v, seq, d_head);
         let ctx = GpuContext::new();
-        let gpu = attention_gpu(&ctx, &q, &k, &v, seq as u32, d_head as u32);
+        let gpu = attention(&ctx, &q, &k, &v, seq as u32, d_head as u32);
 
         // 1 / √d_k
         // => 1.0 / √1 = 1.0
@@ -444,7 +444,7 @@ mod test {
         let v: Vec<f32> = vec![0.0, 1.0, 1.0, 1.0];
         let cpu = attention_cpu(&q, &k, &v, seq, d_head);
         let ctx = GpuContext::new();
-        let gpu = attention_gpu(&ctx, &q, &k, &v, seq as u32, d_head as u32);
+        let gpu = attention(&ctx, &q, &k, &v, seq as u32, d_head as u32);
 
         // q            k           v
         // | 1.0 0.0 | | 1.0 1.0 | | 0.0 1.0 |
@@ -510,7 +510,7 @@ mod test {
         let v: Vec<f32> = random_f32(seq * d_head, 34);
         let cpu = attention_cpu(&q, &k, &v, seq, d_head);
         let ctx = GpuContext::new();
-        let gpu = attention_gpu(&ctx, &q, &k, &v, seq as u32, d_head as u32);
+        let gpu = attention(&ctx, &q, &k, &v, seq as u32, d_head as u32);
 
         assert_eq!(cpu.len(), seq * d_head);
         assert_eq!(gpu.len(), seq * d_head);
@@ -526,7 +526,7 @@ mod test {
         let v: Vec<f32> = random_f32(seq * d_head, 44);
         let cpu = attention_cpu(&q, &k, &v, seq, d_head);
         let ctx = GpuContext::new();
-        let gpu = attention_gpu(&ctx, &q, &k, &v, seq as u32, d_head as u32);
+        let gpu = attention(&ctx, &q, &k, &v, seq as u32, d_head as u32);
 
         assert_eq!(cpu.len(), seq * d_head);
         assert_eq!(gpu.len(), seq * d_head);

@@ -6,9 +6,9 @@
 
 | カーネル                  | 初回 Median | warm_up後 Median | measurement_time後 Median |
 | --------------------- | --------- | --------------- | ------------------------ |
-| matmul_gpu            | 1.74 ms   | 1.88 ms         | 1.92 ms                  |
-| attention_gpu         | 8.97 ms   | 8.48 ms         | 8.46 ms                  |
-| transformer_block_gpu | 96.4 ms   | 85.2 ms         | 98.2 ms                  |
+| matmul            | 1.74 ms   | 1.88 ms         | 1.92 ms                  |
+| attention         | 8.97 ms   | 8.48 ms         | 8.46 ms                  |
+| transformer_block | 96.4 ms   | 85.2 ms         | 98.2 ms                  |
 
 macOS の Metal バックエンドは長時間連続実行でサーマルスロットリングが起きやすく、これが原因で悪化と考えられる。
 
@@ -42,10 +42,10 @@ cargo bench --bench model -- --save-baseline g1_4b
 
 | カーネル                                                  | Median    | Std. Dev. |
 | ----------------------------------------------------- | --------- | --------- |
-| matmul_gpu 512×64×64                                  | 1.975 ms  | 204 µs    |
+| matmul 512×64×64                                  | 1.975 ms  | 204 µs    |
 | attention / flash_attention seq=512, d_head=64        | 8.366 ms  | 1.380 ms  |
 | attention / before_flash_attention seq=512, d_head=64 | 3.782 ms  | 200 µs    |
-| transformer_block_gpu seq=512                         | 101.95 ms | 12.11 ms  |
+| transformer_block seq=512                         | 101.95 ms | 12.11 ms  |
 
 
 機能導入後の比較は以下を実行

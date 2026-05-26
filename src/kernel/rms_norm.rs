@@ -4,13 +4,7 @@ use crate::gpu_context::GpuContext;
 
 const WG: u32 = 256;
 
-pub fn rms_norm_gpu(
-    ctx: &GpuContext,
-    x: &[f32],
-    gamma: &[f32],
-    eps: f32,
-    d_model: u32,
-) -> Vec<f32> {
+pub fn rms_norm(ctx: &GpuContext, x: &[f32], gamma: &[f32], eps: f32, d_model: u32) -> Vec<f32> {
     assert_eq!(
         x.len() as u32 % d_model,
         0,
@@ -153,7 +147,7 @@ pub fn rms_norm_cpu(x: &[f32], gamma: &[f32], eps: f32, d_model: usize) -> Vec<f
 mod test {
     use crate::{
         gpu_context::GpuContext,
-        kernel::rms_norm::{rms_norm_cpu, rms_norm_gpu},
+        kernel::rms_norm::{rms_norm, rms_norm_cpu},
         test_utils::assert_close,
         util::random_f32,
     };
@@ -166,7 +160,7 @@ mod test {
         let d_model = 2;
         let cpu = rms_norm_cpu(&x, &gamma, eps, d_model);
         let ctx = GpuContext::new();
-        let gpu = rms_norm_gpu(&ctx, &x, &gamma, eps, d_model as u32);
+        let gpu = rms_norm(&ctx, &x, &gamma, eps, d_model as u32);
 
         // rms = √(sum(x^2)/d + ε)
         // √((1.0*1.0+2.0*2.0)/2 + 1.5) = 2.0
@@ -189,7 +183,7 @@ mod test {
         let x = random_f32(len, 42);
         let cpu = rms_norm_cpu(&x, &gamma, eps, d_model);
         let ctx = GpuContext::new();
-        let gpu = rms_norm_gpu(&ctx, &x, &gamma, eps, d_model as u32);
+        let gpu = rms_norm(&ctx, &x, &gamma, eps, d_model as u32);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }

@@ -1,7 +1,7 @@
 use crate::gpu_context::GpuContext;
 use wgpu::util::DeviceExt;
 
-pub fn cross_entropy_loss_gpu(
+pub fn cross_entropy_loss(
     ctx: &GpuContext,
     logits: &[f32],    // (seq * vocab_size)
     targets: &[usize], // (seq,)
@@ -198,7 +198,7 @@ pub fn cross_entropy_loss_row_cpu(logits: &[f32], target: usize) -> (f32, Vec<f3
 mod test {
     use crate::{
         gpu_context::GpuContext,
-        kernel::cross_entropy_loss::{cross_entropy_loss_cpu, cross_entropy_loss_gpu},
+        kernel::cross_entropy_loss::{cross_entropy_loss, cross_entropy_loss_cpu},
         test_utils::assert_close,
     };
 
@@ -211,7 +211,7 @@ mod test {
 
         let (cpu_loss, cpu_grad) = cross_entropy_loss_cpu(&logits, &targets, seq, vocab_size);
         let ctx = GpuContext::new();
-        let (gpu_loss, gpu_grad) = cross_entropy_loss_gpu(&ctx, &logits, &targets, seq, vocab_size);
+        let (gpu_loss, gpu_grad) = cross_entropy_loss(&ctx, &logits, &targets, seq, vocab_size);
 
         // vocab_size=3, targets=[1], logits=[1.0, 2.0, 0.0]
         // max=2.0, exps=[e^-1, 1, e^-2]
@@ -274,7 +274,7 @@ mod test {
 
         let (cpu_loss, cpu_grad) = cross_entropy_loss_cpu(&logits, &targets, seq, vocab_size);
         let ctx = GpuContext::new();
-        let (gpu_loss, gpu_grad) = cross_entropy_loss_gpu(&ctx, &logits, &targets, seq, vocab_size);
+        let (gpu_loss, gpu_grad) = cross_entropy_loss(&ctx, &logits, &targets, seq, vocab_size);
 
         let exp_loss = 0.40760;
         let exp_grad = vec![0.24472, 0.09002, -0.33476];
@@ -330,7 +330,7 @@ mod test {
 
         let (cpu_loss, cpu_grad) = cross_entropy_loss_cpu(&logits, &targets, seq, vocab_size);
         let ctx = GpuContext::new();
-        let (gpu_loss, gpu_grad) = cross_entropy_loss_gpu(&ctx, &logits, &targets, seq, vocab_size);
+        let (gpu_loss, gpu_grad) = cross_entropy_loss(&ctx, &logits, &targets, seq, vocab_size);
 
         let exp_loss = 0.4076;
         let exp_grad = vec![0.24472, -0.33476, 0.09002, 0.24472, -0.33476, 0.09002];

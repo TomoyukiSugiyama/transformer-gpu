@@ -1,9 +1,18 @@
 use crate::{
     gpu_context::GpuContext,
-    kernel::{attention::attention_gpu, matmul::matmul_gpu, rope::rope_gpu},
+    kernel::{attention::attention, matmul::matmul, rope::rope},
     model_config::ModelConfig,
     util::{concat_columns_into, random_f32, split_columns},
 };
+
+#[derive(Default)]
+pub struct MultiHeadAttentionForwardCache {
+    pub q: Vec<f32>,           // (seq × d_model)
+    pub k: Vec<f32>,           // (seq × d_model)
+    pub v: Vec<f32>,           // (seq × d_model)
+    pub attn_scores: Vec<f32>, // (seq × seq)
+}
+
 pub struct MultiHeadAttention {
     pub w_q: Vec<f32>,
     pub w_k: Vec<f32>,
@@ -28,6 +37,7 @@ impl MultiHeadAttention {
         x: &[f32],
         cos_table: &[f32],
         sin_table: &[f32],
+        cache: &mut MultiHeadAttentionForwardCache,
     ) -> Vec<f32> {
         assert!(
             cfg.d_model % cfg.n_heads == 0,
@@ -37,7 +47,7 @@ impl MultiHeadAttention {
         let seq = x.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
-        let q = matmul_gpu(
+        cache.q = matmul(
             ctx,
             x,
             &self.w_q,
@@ -45,7 +55,7 @@ impl MultiHeadAttention {
             cfg.d_model as u32,
             cfg.d_model as u32,
         );
-        let k = matmul_gpu(
+        cache.k = matmul(
             ctx,
             x,
             &self.w_k,
@@ -53,7 +63,7 @@ impl MultiHeadAttention {
             cfg.d_model as u32,
             cfg.d_model as u32,
         );
-        let v = matmul_gpu(
+        cache.v = matmul(
             ctx,
             x,
             &self.w_v,
@@ -62,19 +72,19 @@ impl MultiHeadAttention {
             cfg.d_model as u32,
         );
         let q_heads = split_columns(
-            &q,
+            &cache.q,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
         let k_heads = split_columns(
-            &k,
+            &cache.k,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
         let v_heads = split_columns(
-            &v,
+            &cache.v,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
@@ -82,16 +92,16 @@ impl MultiHeadAttention {
 
         let q_heads: Vec<Vec<f32>> = q_heads
             .iter()
-            .map(|q| rope_gpu(ctx, q, d_head as usize, &cos_table, &sin_table))
+            .map(|q| rope(ctx, q, d_head as usize, &cos_table, &sin_table))
             .collect();
         let k_heads: Vec<Vec<f32>> = k_heads
             .iter()
-            .map(|k| rope_gpu(ctx, k, d_head as usize, &cos_table, &sin_table))
+            .map(|k| rope(ctx, k, d_head as usize, &cos_table, &sin_table))
             .collect();
 
         let mut attn = Vec::with_capacity(cfg.n_heads as usize);
         for i in 0..cfg.n_heads as usize {
-            attn.push(attention_gpu(
+            attn.push(attention(
                 ctx,
                 &q_heads[i],
                 &k_heads[i],
@@ -101,11 +111,11 @@ impl MultiHeadAttention {
             ));
         }
 
-        let attn = concat_columns_into(&attn, seq, cfg.d_model, d_head, cfg.n_heads);
+        cache.attn_scores = concat_columns_into(&attn, seq, cfg.d_model, d_head, cfg.n_heads);
 
-        matmul_gpu(
+        matmul(
             ctx,
-            &attn,
+            &cache.attn_scores,
             &self.w_o,
             seq as u32,
             cfg.d_model as u32,
@@ -121,6 +131,7 @@ impl MultiHeadAttention {
         x: &[f32],
         cos_table: &[f32],
         sin_table: &[f32],
+        cache: &mut MultiHeadAttentionForwardCache,
     ) -> Vec<f32> {
         use crate::kernel::{matmul::matmul_cpu, rope::rope_cpu};
 
@@ -132,23 +143,23 @@ impl MultiHeadAttention {
         let seq = x.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
-        let q = matmul_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model);
-        let k = matmul_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model);
-        let v = matmul_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model);
+        cache.q = matmul_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model);
+        cache.k = matmul_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model);
+        cache.v = matmul_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model);
         let q_heads = split_columns(
-            &q,
+            &cache.q,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
         let k_heads = split_columns(
-            &k,
+            &cache.k,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
         let v_heads = split_columns(
-            &v,
+            &cache.v,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
@@ -175,7 +186,7 @@ impl MultiHeadAttention {
             ));
         }
 
-        let attn = concat_columns_into(
+        cache.attn_scores = concat_columns_into(
             &attn,
             seq as usize,
             cfg.d_model as usize,
@@ -183,16 +194,19 @@ impl MultiHeadAttention {
             cfg.n_heads as usize,
         );
 
-        matmul_cpu(&attn, &self.w_o, seq, cfg.d_model, cfg.d_model)
+        matmul_cpu(&cache.attn_scores, &self.w_o, seq, cfg.d_model, cfg.d_model)
     }
 }
 
 #[cfg(test)]
 mod test {
     use crate::{
-        gpu_context::GpuContext, kernel::rope::create_table,
-        model::multi_head_attention::MultiHeadAttention, model_config::ModelConfig,
-        test_utils::assert_close, util::random_f32,
+        gpu_context::GpuContext,
+        kernel::rope::create_table,
+        model::multi_head_attention::{MultiHeadAttention, MultiHeadAttentionForwardCache},
+        model_config::ModelConfig,
+        test_utils::assert_close,
+        util::random_f32,
     };
 
     #[test]
@@ -201,13 +215,15 @@ mod test {
         let cfg = ModelConfig {
             ..Default::default()
         };
+        let mut cache_cpu = MultiHeadAttentionForwardCache::default();
+        let mut cache = MultiHeadAttentionForwardCache::default();
         let mha = MultiHeadAttention::new(&cfg);
         let seq = 64usize;
         let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
 
-        let cpu = mha.forward_cpu(&cfg, &x, &cos_table, &sin_table);
-        let gpu = mha.forward(&ctx, &cfg, &x, &cos_table, &sin_table);
+        let cpu = mha.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
+        let gpu = mha.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
 
         assert_close(&gpu, &cpu, 1e-3, 1e-4);
     }

@@ -17,7 +17,7 @@ pub fn create_table(d_head: usize, max_len: usize, base: f32) -> (Vec<f32>, Vec<
     (cos_table, sin_table)
 }
 
-pub fn rope_gpu(
+pub fn rope(
     ctx: &GpuContext,
     x: &[f32],
     d_head: usize,
@@ -205,7 +205,7 @@ pub fn rope_cpu(x: &[f32], d_head: usize, cos_table: &[f32], sin_table: &[f32]) 
 mod test {
     use crate::{
         gpu_context::GpuContext,
-        kernel::rope::{create_table, rope_cpu, rope_gpu},
+        kernel::rope::{create_table, rope, rope_cpu},
         test_utils::assert_close,
         util::random_f32,
     };
@@ -220,7 +220,7 @@ mod test {
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
         let cpu = rope_cpu(&x, d_head, &cos_table, &sin_table);
         let ctx = GpuContext::new();
-        let gpu = rope_gpu(&ctx, &x, d_head, &cos_table, &sin_table);
+        let gpu = rope(&ctx, &x, d_head, &cos_table, &sin_table);
 
         cpu.iter()
             .zip(x.iter())
@@ -276,7 +276,7 @@ mod test {
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
         let cpu = rope_cpu(&x, d_head, &cos_table, &sin_table);
         let ctx = GpuContext::new();
-        let gpu = rope_gpu(&ctx, &x, d_head, &cos_table, &sin_table);
+        let gpu = rope(&ctx, &x, d_head, &cos_table, &sin_table);
 
         cpu.iter()
             .zip(exp.iter())
@@ -315,7 +315,7 @@ mod test {
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
         let cpu = rope_cpu(&x, d_head, &cos_table, &sin_table);
         let ctx = GpuContext::new();
-        let gpu = rope_gpu(&ctx, &x, d_head, &cos_table, &sin_table);
+        let gpu = rope(&ctx, &x, d_head, &cos_table, &sin_table);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }

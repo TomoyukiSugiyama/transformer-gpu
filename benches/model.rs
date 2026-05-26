@@ -2,8 +2,11 @@ use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use transformer_gpu::{
-    gpu_context::GpuContext, kernel::rope::create_table,
-    model::transformer_block::TransformerBlock, model_config::ModelConfig, util::random_f32,
+    gpu_context::GpuContext,
+    kernel::rope::create_table,
+    model::transformer_block::{TransformerBlock, TransformerBlockForwardCache},
+    model_config::ModelConfig,
+    util::random_f32,
 };
 
 fn bench_transformer_block(c: &mut Criterion) {
@@ -16,9 +19,9 @@ fn bench_transformer_block(c: &mut Criterion) {
     let x = random_f32(seq * cfg.d_model, 0);
     let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
     let block = TransformerBlock::new(&cfg);
-
-    c.bench_function("transformer_block_gpu seq=512", |bencher| {
-        bencher.iter(|| block.forward(&ctx, &cfg, &x, &cos_table, &sin_table));
+    let mut cache = TransformerBlockForwardCache::default();
+    c.bench_function("transformer_block seq=512", |bencher| {
+        bencher.iter(|| block.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache));
     });
 }
 

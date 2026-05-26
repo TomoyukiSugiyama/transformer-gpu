@@ -4,7 +4,7 @@ use crate::gpu_context::GpuContext;
 
 const SIZE: u32 = 256;
 
-pub fn residual_add_gpu(ctx: &GpuContext, x1: &[f32], x2: &[f32]) -> Vec<f32> {
+pub fn residual_add(ctx: &GpuContext, x1: &[f32], x2: &[f32]) -> Vec<f32> {
     assert_eq!(x1.len(), x2.len(), "x1 and x2 must have the same length");
     let size = x1.len() as u32;
     let byte_size = (size * 4) as u64;
@@ -122,7 +122,7 @@ pub fn residual_add_cpu(x1: &[f32], x2: &[f32]) -> Vec<f32> {
 mod test {
     use crate::{
         gpu_context::GpuContext,
-        kernel::residual_add::{residual_add_cpu, residual_add_gpu},
+        kernel::residual_add::{residual_add, residual_add_cpu},
     };
 
     #[test]
@@ -132,7 +132,7 @@ mod test {
 
         let cpu = residual_add_cpu(&x1, &x2);
         let ctx = GpuContext::new();
-        let gpu = residual_add_gpu(&ctx, &x1, &x2);
+        let gpu = residual_add(&ctx, &x1, &x2);
         let exp: Vec<f32> = vec![3.0, 3.0];
 
         assert_eq!(cpu, exp);

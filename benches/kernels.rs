@@ -4,8 +4,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use transformer_gpu::{
     gpu_context::GpuContext,
     kernel::{
-        attention::{attention_gpu, before_flash_attention_gpu},
-        matmul::matmul_gpu,
+        attention::{attention, before_flash_attention},
+        matmul::matmul,
     },
     util::random_f32,
 };
@@ -17,8 +17,8 @@ fn bench_matmul(c: &mut Criterion) {
     let a = random_f32((seq * d_model) as usize, 0);
     let b = random_f32((d_model * d_model) as usize, 1);
 
-    c.bench_function("matmul_gpu 512x64x64", |bencher| {
-        bencher.iter(|| matmul_gpu(&ctx, &a, &b, seq, d_model, d_model));
+    c.bench_function("matmul 512x64x64", |bencher| {
+        bencher.iter(|| matmul(&ctx, &a, &b, seq, d_model, d_model));
     });
 }
 
@@ -33,11 +33,11 @@ fn bench_attention(c: &mut Criterion) {
     let mut group = c.benchmark_group("attention seq=512 d_head=64");
 
     group.bench_function("flash_attention", |bencher| {
-        bencher.iter(|| attention_gpu(&ctx, &q, &k, &v, seq, d_head));
+        bencher.iter(|| attention(&ctx, &q, &k, &v, seq, d_head));
     });
 
     group.bench_function("before_flash_attention", |bencher| {
-        bencher.iter(|| before_flash_attention_gpu(&ctx, &q, &k, &v, seq, d_head));
+        bencher.iter(|| before_flash_attention(&ctx, &q, &k, &v, seq, d_head));
     });
 
     group.finish();
