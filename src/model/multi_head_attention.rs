@@ -7,11 +7,13 @@ use crate::{
 
 #[derive(Default)]
 pub struct MultiHeadAttentionForwardCache {
-    pub q: Vec<f32>,                 // (seq × d_model)
-    pub k: Vec<f32>,                 // (seq × d_model)
-    pub v: Vec<f32>,                 // (seq × d_model)
-    pub attn_weights: Vec<Vec<f32>>, // [n_heads] (seq × seq) softmax後
-    pub wo_in: Vec<f32>,             // (seq × d_model) w_o への入力
+    pub q: Vec<f32>,             // (seq × d_model)
+    pub k: Vec<f32>,             // (seq × d_model)
+    pub v: Vec<f32>,             // (seq × d_model)
+    pub rope_q: Vec<Vec<f32>>,   // [n_heads] (seq × seq)
+    pub rope_k: Vec<Vec<f32>>,   // [n_heads] (seq × seq)
+    pub attn_out: Vec<Vec<f32>>, // [n_heads] (seq × d_model)
+    pub wo_in: Vec<f32>,         // (seq × d_model) w_o への入力
 }
 
 pub struct MultiHeadAttention {
@@ -91,28 +93,28 @@ impl MultiHeadAttention {
             cfg.n_heads as usize,
         );
 
-        let q_heads: Vec<Vec<f32>> = q_heads
+        cache.rope_q = q_heads
             .iter()
             .map(|q| rope(ctx, q, d_head as usize, &cos_table, &sin_table))
             .collect();
-        let k_heads: Vec<Vec<f32>> = k_heads
+        cache.rope_k = k_heads
             .iter()
             .map(|k| rope(ctx, k, d_head as usize, &cos_table, &sin_table))
             .collect();
 
-        cache.attn_weights = Vec::with_capacity(cfg.n_heads as usize);
+        cache.attn_out = Vec::with_capacity(cfg.n_heads as usize);
         for i in 0..cfg.n_heads as usize {
-            cache.attn_weights.push(attention(
+            cache.attn_out.push(attention(
                 ctx,
-                &q_heads[i],
-                &k_heads[i],
+                &cache.rope_q[i],
+                &cache.rope_k[i],
                 &v_heads[i],
                 seq as u32,
                 d_head as u32,
             ));
         }
 
-        cache.wo_in = concat_columns_into(&cache.attn_weights, seq, cfg.d_model, d_head, cfg.n_heads);
+        cache.wo_in = concat_columns_into(&cache.attn_out, seq, cfg.d_model, d_head, cfg.n_heads);
 
         matmul(
             ctx,
@@ -166,21 +168,20 @@ impl MultiHeadAttention {
             cfg.n_heads as usize,
         );
 
-        let q_heads: Vec<Vec<f32>> = q_heads
+        cache.rope_q = q_heads
             .iter()
             .map(|q| rope_cpu(q, d_head, &cos_table, &sin_table))
             .collect();
-        let k_heads: Vec<Vec<f32>> = k_heads
+        cache.rope_k = k_heads
             .iter()
             .map(|k| rope_cpu(k, d_head, &cos_table, &sin_table))
             .collect();
-        cache.attn_weights = Vec::with_capacity(cfg.n_heads as usize);
+        cache.attn_out = Vec::with_capacity(cfg.n_heads as usize);
         for i in 0..cfg.n_heads as usize {
             use crate::kernel::attention::attention_cpu;
-
-            cache.attn_weights.push(attention_cpu(
-                &q_heads[i],
-                &k_heads[i],
+            cache.attn_out.push(attention_cpu(
+                &cache.rope_q[i],
+                &cache.rope_k[i],
                 &v_heads[i],
                 seq,
                 d_head,
@@ -188,7 +189,7 @@ impl MultiHeadAttention {
         }
 
         cache.wo_in = concat_columns_into(
-            &cache.attn_weights,
+            &cache.attn_out,
             seq as usize,
             cfg.d_model as usize,
             d_head as usize,
