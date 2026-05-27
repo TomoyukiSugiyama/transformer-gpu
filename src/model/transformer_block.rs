@@ -3,7 +3,7 @@ use crate::{
     kernel::{residual_add::residual_add, rms_norm::rms_norm},
     model::{
         ffn::{Ffn, FfnForwardCache},
-        multi_head_attention::{MultiHeadAttention, MultiHeadAttentionForwardCache},
+        attention::{Attention, AttentionForwardCache},
     },
     model_config::ModelConfig,
     util::random_f32,
@@ -13,16 +13,16 @@ use crate::{
 pub struct TransformerBlockForwardCache {
     pub x_in: Vec<f32>,
     pub norm1_out: Vec<f32>,
-    pub mha_out: Vec<f32>,
+    pub attn_out: Vec<f32>,
     pub add1_out: Vec<f32>,
     pub norm2_out: Vec<f32>,
     pub ffn_out: Vec<f32>,
-    pub mha: MultiHeadAttentionForwardCache,
+    pub attn: AttentionForwardCache,
     pub ffn: FfnForwardCache,
 }
 
 pub struct TransformerBlock {
-    pub mha: MultiHeadAttention,
+    pub attn: Attention,
     pub ffn: Ffn,
     pub gamma_1: Vec<f32>, // RMSNorm の γ
     pub gamma_2: Vec<f32>,
@@ -31,7 +31,7 @@ pub struct TransformerBlock {
 impl TransformerBlock {
     pub fn new(cfg: &ModelConfig) -> Self {
         Self {
-            mha: MultiHeadAttention::new(&cfg),
+            attn: Attention::new(&cfg),
             ffn: Ffn::new(cfg),
             gamma_1: random_f32(cfg.d_model, 38),
             gamma_2: random_f32(cfg.d_model, 38),
@@ -49,15 +49,15 @@ impl TransformerBlock {
     ) -> Vec<f32> {
         cache.x_in = x.to_vec();
         cache.norm1_out = rms_norm(&ctx, &x, &self.gamma_1, cfg.eps, cfg.d_model as u32);
-        cache.mha_out = self.mha.forward(
+        cache.attn_out = self.attn.forward(
             ctx,
             cfg,
             &cache.norm1_out,
             cos_table,
             sin_table,
-            &mut cache.mha,
+            &mut cache.attn,
         );
-        cache.add1_out = residual_add(&ctx, x, &cache.mha_out);
+        cache.add1_out = residual_add(&ctx, x, &cache.attn_out);
         cache.norm2_out = rms_norm(
             &ctx,
             &cache.add1_out,
@@ -82,10 +82,10 @@ impl TransformerBlock {
         use crate::kernel::{residual_add::residual_add_cpu, rms_norm::rms_norm_cpu};
         cache.x_in = x.to_vec();
         cache.norm1_out = rms_norm_cpu(&x, &self.gamma_1, cfg.eps, cfg.d_model);
-        cache.mha_out =
-            self.mha
-                .forward_cpu(cfg, &cache.norm1_out, cos_table, sin_table, &mut cache.mha);
-        cache.add1_out = residual_add_cpu(x, &cache.mha_out);
+        cache.attn_out =
+            self.attn
+                .forward_cpu(cfg, &cache.norm1_out, cos_table, sin_table, &mut cache.attn);
+        cache.add1_out = residual_add_cpu(x, &cache.attn_out);
         cache.norm2_out = rms_norm_cpu(&cache.add1_out, &self.gamma_2, cfg.eps, cfg.d_model);
         cache.ffn_out = self.ffn.forward_cpu(cfg, &cache.norm2_out, &mut cache.ffn);
         residual_add_cpu(&cache.add1_out, &cache.ffn_out)

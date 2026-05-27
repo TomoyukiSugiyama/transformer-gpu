@@ -6,7 +6,7 @@ use crate::{
 };
 
 #[derive(Default)]
-pub struct MultiHeadAttentionForwardCache {
+pub struct AttentionForwardCache {
     pub q: Vec<f32>,             // (seq × d_model)
     pub k: Vec<f32>,             // (seq × d_model)
     pub v: Vec<f32>,             // (seq × d_model)
@@ -16,14 +16,14 @@ pub struct MultiHeadAttentionForwardCache {
     pub wo_in: Vec<f32>,         // (seq × d_model) w_o への入力
 }
 
-pub struct MultiHeadAttention {
+pub struct Attention {
     pub w_q: Vec<f32>,
     pub w_k: Vec<f32>,
     pub w_v: Vec<f32>,
     pub w_o: Vec<f32>,
 }
 
-impl MultiHeadAttention {
+impl Attention {
     pub fn new(cfg: &ModelConfig) -> Self {
         Self {
             w_q: random_f32(cfg.d_model * cfg.d_model, 32),
@@ -40,7 +40,7 @@ impl MultiHeadAttention {
         x: &[f32],
         cos_table: &[f32],
         sin_table: &[f32],
-        cache: &mut MultiHeadAttentionForwardCache,
+        cache: &mut AttentionForwardCache,
     ) -> Vec<f32> {
         assert!(
             cfg.d_model % cfg.n_heads == 0,
@@ -134,7 +134,7 @@ impl MultiHeadAttention {
         x: &[f32],
         cos_table: &[f32],
         sin_table: &[f32],
-        cache: &mut MultiHeadAttentionForwardCache,
+        cache: &mut AttentionForwardCache,
     ) -> Vec<f32> {
         use crate::kernel::{matmul::matmul_cpu, rope::rope_cpu};
 
@@ -205,7 +205,7 @@ mod test {
     use crate::{
         gpu_context::GpuContext,
         kernel::rope::create_table,
-        model::multi_head_attention::{MultiHeadAttention, MultiHeadAttentionForwardCache},
+        model::attention::{Attention, AttentionForwardCache},
         model_config::ModelConfig,
         test_utils::assert_close,
         util::random_f32,
@@ -217,15 +217,15 @@ mod test {
         let cfg = ModelConfig {
             ..Default::default()
         };
-        let mut cache_cpu = MultiHeadAttentionForwardCache::default();
-        let mut cache = MultiHeadAttentionForwardCache::default();
-        let mha = MultiHeadAttention::new(&cfg);
+        let mut cache_cpu = AttentionForwardCache::default();
+        let mut cache = AttentionForwardCache::default();
+        let attn = Attention::new(&cfg);
         let seq = 64usize;
         let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
 
-        let cpu = mha.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
-        let gpu = mha.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
+        let cpu = attn.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
+        let gpu = attn.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
 
         assert_close(&gpu, &cpu, 1e-3, 1e-4);
     }

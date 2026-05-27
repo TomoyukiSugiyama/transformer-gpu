@@ -1,4 +1,4 @@
 mod ffn;
 pub mod language_model;
-mod multi_head_attention;
+mod attention;
 pub mod transformer_block;
