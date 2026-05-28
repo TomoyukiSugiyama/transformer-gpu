@@ -137,3 +137,46 @@ pub fn elementwise_with<F: Fn(f32, f32) -> f32>(data: &[f32], other: &[f32], f: 
 pub fn swiglu_elementwise_cpu(gate: &[f32], up: &[f32]) -> Vec<f32> {
     elementwise_with(gate, up, |g, u| swish(g) * u)
 }
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        gpu_context::GpuContext,
+        kernel::swiglu_elementwise::{swiglu_elementwise, swiglu_elementwise_cpu},
+        test_utils::assert_close,
+    };
+
+    #[test]
+    fn test_swiglu_elementwise() {
+        let gate = vec![1.0, 2.0];
+        let up = vec![1.0, 2.0];
+
+        let cpu = swiglu_elementwise_cpu(&gate, &up);
+        let ctx = GpuContext::new();
+        let gpu = swiglu_elementwise(&ctx, &gate, &up);
+
+        // a = swish(g) * u
+        // swish = x / (1.0 + (-x).exp())
+        // exp(-1) = 0.36787
+        // exp(-2) = 0.13533
+        // swish = 1 / (1.0 + 0.36787) = 0.73106
+        // swish = 2 / (1.0 + 0.13533) = 1.76160
+        // a = [0.73106, 3.5232]
+
+        let exp = vec![0.73106, 3.5232];
+        cpu.iter()
+            .zip(exp.iter())
+            .enumerate()
+            .for_each(|(i, (c, e))| {
+                assert!((c - e).abs() < 1e-4, "index {i}: cpu={}, exp={}", c, e)
+            });
+        gpu.iter()
+            .zip(exp.iter())
+            .enumerate()
+            .for_each(|(i, (g, e))| {
+                assert!((g - e).abs() < 1e-4, "index {i}: gpu={}, exp={}", g, e)
+            });
+
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
+    }
+}
