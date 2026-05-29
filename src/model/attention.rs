@@ -10,9 +10,10 @@ pub struct AttentionForwardCache {
     pub q: Vec<f32>,             // (seq × d_model)
     pub k: Vec<f32>,             // (seq × d_model)
     pub v: Vec<f32>,             // (seq × d_model)
-    pub rope_q: Vec<Vec<f32>>,   // [n_heads] (seq × seq)
-    pub rope_k: Vec<Vec<f32>>,   // [n_heads] (seq × seq)
-    pub attn_out: Vec<Vec<f32>>, // [n_heads] (seq × d_model)
+    pub q_rope: Vec<Vec<f32>>,   // [n_heads] (seq × d_head)
+    pub k_rope: Vec<Vec<f32>>,   // [n_heads] (seq × d_head)
+    pub v_heads: Vec<Vec<f32>>,  // [n_heads] (seq × d_head)
+    pub attn_out: Vec<Vec<f32>>, // [n_heads] (seq × d_head)
     pub wo_in: Vec<f32>,         // (seq × d_model) w_o への入力
 }
 
@@ -86,18 +87,18 @@ impl Attention {
             d_head as usize,
             cfg.n_heads as usize,
         );
-        let v_heads = split_columns(
+        cache.v_heads = split_columns(
             &cache.v,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
 
-        cache.rope_q = q_heads
+        cache.q_rope = q_heads
             .iter()
             .map(|q| rope(ctx, q, d_head as usize, &cos_table, &sin_table))
             .collect();
-        cache.rope_k = k_heads
+        cache.k_rope = k_heads
             .iter()
             .map(|k| rope(ctx, k, d_head as usize, &cos_table, &sin_table))
             .collect();
@@ -106,9 +107,9 @@ impl Attention {
         for i in 0..cfg.n_heads as usize {
             cache.attn_out.push(attention(
                 ctx,
-                &cache.rope_q[i],
-                &cache.rope_k[i],
-                &v_heads[i],
+                &cache.q_rope[i],
+                &cache.k_rope[i],
+                &cache.v_heads[i],
                 seq as u32,
                 d_head as u32,
             ));
@@ -168,11 +169,11 @@ impl Attention {
             cfg.n_heads as usize,
         );
 
-        cache.rope_q = q_heads
+        cache.q_rope = q_heads
             .iter()
             .map(|q| rope_cpu(q, d_head, &cos_table, &sin_table))
             .collect();
-        cache.rope_k = k_heads
+        cache.k_rope = k_heads
             .iter()
             .map(|k| rope_cpu(k, d_head, &cos_table, &sin_table))
             .collect();
@@ -180,8 +181,8 @@ impl Attention {
         for i in 0..cfg.n_heads as usize {
             use crate::kernel::attention::attention_cpu;
             cache.attn_out.push(attention_cpu(
-                &cache.rope_q[i],
-                &cache.rope_k[i],
+                &cache.q_rope[i],
+                &cache.k_rope[i],
                 &v_heads[i],
                 seq,
                 d_head,

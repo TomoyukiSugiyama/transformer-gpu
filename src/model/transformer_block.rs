@@ -2,8 +2,8 @@ use crate::{
     gpu_context::GpuContext,
     kernel::{residual_add::residual_add, rms_norm::rms_norm},
     model::{
-        ffn::{Ffn, FfnForwardCache},
         attention::{Attention, AttentionForwardCache},
+        ffn::{Ffn, FfnForwardCache},
     },
     model_config::ModelConfig,
     util::random_f32,
