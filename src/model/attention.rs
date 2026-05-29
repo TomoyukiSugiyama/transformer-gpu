@@ -162,7 +162,7 @@ impl Attention {
             d_head as usize,
             cfg.n_heads as usize,
         );
-        let v_heads = split_columns(
+        cache.v_heads = split_columns(
             &cache.v,
             cfg.d_model as usize,
             d_head as usize,
@@ -183,7 +183,7 @@ impl Attention {
             cache.attn_out.push(attention_cpu(
                 &cache.q_rope[i],
                 &cache.k_rope[i],
-                &v_heads[i],
+                &cache.v_heads[i],
                 seq,
                 d_head,
             ));
