@@ -14,6 +14,7 @@ pub struct AttentionForwardCache {
     pub k_rope: Vec<Vec<f32>>,   // [n_heads] (seq × d_head)
     pub v_heads: Vec<Vec<f32>>,  // [n_heads] (seq × d_head)
     pub attn_out: Vec<Vec<f32>>, // [n_heads] (seq × d_head)
+    pub attn_l: Vec<Vec<f32>>,   // [n_heads] (seq)
     pub wo_in: Vec<f32>,         // (seq × d_model) w_o への入力
 }
 
@@ -104,15 +105,18 @@ impl Attention {
             .collect();
 
         cache.attn_out = Vec::with_capacity(cfg.n_heads as usize);
+        cache.attn_l = Vec::with_capacity(cfg.n_heads as usize);
         for i in 0..cfg.n_heads as usize {
-            cache.attn_out.push(attention(
+            let (o, l) = attention(
                 ctx,
                 &cache.q_rope[i],
                 &cache.k_rope[i],
                 &cache.v_heads[i],
                 seq as u32,
                 d_head as u32,
-            ));
+            );
+            cache.attn_out.push(o);
+            cache.attn_l.push(l);
         }
 
         cache.wo_in = concat_columns_into(&cache.attn_out, seq, cfg.d_model, d_head, cfg.n_heads);
@@ -178,15 +182,18 @@ impl Attention {
             .map(|k| rope_cpu(k, d_head, &cos_table, &sin_table))
             .collect();
         cache.attn_out = Vec::with_capacity(cfg.n_heads as usize);
+        cache.attn_l = Vec::with_capacity(cfg.n_heads as usize);
         for i in 0..cfg.n_heads as usize {
             use crate::kernel::attention::attention_cpu;
-            cache.attn_out.push(attention_cpu(
+            let (o, l) = attention_cpu(
                 &cache.q_rope[i],
                 &cache.k_rope[i],
                 &cache.v_heads[i],
                 seq,
                 d_head,
-            ));
+            );
+            cache.attn_out.push(o);
+            cache.attn_l.push(l);
         }
 
         cache.wo_in = concat_columns_into(

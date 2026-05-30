@@ -10,7 +10,7 @@ struct faDims {
 @group(0) @binding(0) var<storage, read> fa_q: array<f32>;
 @group(0) @binding(1) var<storage, read> fa_k: array<f32>;
 @group(0) @binding(2) var<storage, read> fa_v: array<f32>;
-@group(0) @binding(3) var<storage, read_write> fa_scores: array<f32>;
+@group(0) @binding(3) var<storage, read_write> fa_scores: array<f32>; // O: [seq*d_head] + L: [seq]
 @group(0) @binding(4) var<uniform> fa_dims: faDims;
 
 var<workgroup> tile_q: array<f32, Br * MAX_D_HEAD>; // [Br][d_head]
@@ -122,6 +122,8 @@ fn flash_attention(
     if in_range {
         for(var d: u32 = 0u; d < d_head; d++){
             fa_scores[row * d_head + d] = o[d];
+            // L[i] = m_i + log(l_i)
+            fa_scores[seq * d_head + row] = m_old + log(l_old);
         }
     }
 }
