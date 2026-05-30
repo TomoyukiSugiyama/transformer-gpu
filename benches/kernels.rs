@@ -5,7 +5,7 @@ use transformer_gpu::{
     gpu_context::GpuContext,
     kernel::{
         attention::{attention, before_flash_attention},
-        matmul::matmul,
+        matmul::matmul_forward,
     },
     util::random_f32,
 };
@@ -18,7 +18,7 @@ fn bench_matmul(c: &mut Criterion) {
     let b = random_f32((d_model * d_model) as usize, 1);
 
     c.bench_function("matmul 512x64x64", |bencher| {
-        bencher.iter(|| matmul(&ctx, &a, &b, seq, d_model, d_model));
+        bencher.iter(|| matmul_forward(&ctx, &a, &b, seq, d_model, d_model));
     });
 }
 

@@ -1,6 +1,8 @@
 use crate::{
     gpu_context::GpuContext,
-    kernel::{embedding::embedding, matmul::matmul, rms_norm::rms_norm, rope::create_table},
+    kernel::{
+        embedding::embedding, matmul::matmul_forward, rms_norm::rms_norm, rope::create_table,
+    },
     model::transformer_block::{TransformerBlock, TransformerBlockForwardCache},
     model_config::ModelConfig,
     util::random_f32,
@@ -71,15 +73,13 @@ impl LanguageModel {
         cache.final_norm_in = x.clone();
         cache.final_norm_out = rms_norm(ctx, &x, &self.final_gamma, cfg.eps, cfg.d_model as u32);
 
-        cache.logits = matmul(
+        cache.logits = matmul_forward(
             ctx,
             &cache.final_norm_out,
             &self.lm_head,
             seq as u32,
             cfg.d_model as u32,
             cfg.vocab_size as u32,
-            false,
-            false,
         );
 
         cache.logits.clone()
@@ -92,7 +92,9 @@ impl LanguageModel {
         token_ids: &[u32],
         cache: &mut LanguageModelForwardCache,
     ) -> Vec<f32> {
-        use crate::kernel::{embedding::embedding_cpu, matmul::matmul_cpu, rms_norm::rms_norm_cpu};
+        use crate::kernel::{
+            embedding::embedding_cpu, matmul::matmul_forward_cpu, rms_norm::rms_norm_cpu,
+        };
 
         let seq = token_ids.len();
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
@@ -112,14 +114,12 @@ impl LanguageModel {
         cache.final_norm_in = x.clone();
         cache.final_norm_out = rms_norm_cpu(&x, &self.final_gamma, cfg.eps, cfg.d_model);
 
-        cache.logits = matmul_cpu(
+        cache.logits = matmul_forward_cpu(
             &cache.final_norm_out,
             &self.lm_head,
             seq,
             cfg.d_model,
             cfg.vocab_size,
-            false,
-            false,
         );
 
         cache.logits.clone()

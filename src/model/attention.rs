@@ -1,6 +1,6 @@
 use crate::{
     gpu_context::GpuContext,
-    kernel::{attention::attention, matmul::matmul, rope::rope},
+    kernel::{attention::attention, matmul::matmul_forward, rope::rope},
     model_config::ModelConfig,
     util::{concat_columns_into, random_f32, split_columns},
 };
@@ -51,35 +51,29 @@ impl Attention {
         let seq = x.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
-        cache.q = matmul(
+        cache.q = matmul_forward(
             ctx,
             x,
             &self.w_q,
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
-            false,
-            false,
         );
-        cache.k = matmul(
+        cache.k = matmul_forward(
             ctx,
             x,
             &self.w_k,
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
-            false,
-            false,
         );
-        cache.v = matmul(
+        cache.v = matmul_forward(
             ctx,
             x,
             &self.w_v,
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
-            false,
-            false,
         );
         let q_heads = split_columns(
             &cache.q,
@@ -123,15 +117,13 @@ impl Attention {
 
         cache.wo_in = concat_columns_into(&cache.attn_out, seq, cfg.d_model, d_head, cfg.n_heads);
 
-        matmul(
+        matmul_forward(
             ctx,
             &cache.wo_in,
             &self.w_o,
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
-            false,
-            false,
         )
     }
 
@@ -145,7 +137,7 @@ impl Attention {
         sin_table: &[f32],
         cache: &mut AttentionForwardCache,
     ) -> Vec<f32> {
-        use crate::kernel::{matmul::matmul_cpu, rope::rope_cpu};
+        use crate::kernel::{matmul::matmul_forward_cpu, rope::rope_cpu};
 
         assert!(
             cfg.d_model % cfg.n_heads == 0,
@@ -155,9 +147,9 @@ impl Attention {
         let seq = x.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
-        cache.q = matmul_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model, false, false);
-        cache.k = matmul_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model, false, false);
-        cache.v = matmul_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model, false, false);
+        cache.q = matmul_forward_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model);
+        cache.k = matmul_forward_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model);
+        cache.v = matmul_forward_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model);
         let q_heads = split_columns(
             &cache.q,
             cfg.d_model as usize,
@@ -205,15 +197,7 @@ impl Attention {
             cfg.n_heads as usize,
         );
 
-        matmul_cpu(
-            &cache.wo_in,
-            &self.w_o,
-            seq,
-            cfg.d_model,
-            cfg.d_model,
-            false,
-            false,
-        )
+        matmul_forward_cpu(&cache.wo_in, &self.w_o, seq, cfg.d_model, cfg.d_model)
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
     gpu_context::GpuContext,
-    kernel::{matmul::matmul, swiglu_elementwise::swiglu_elementwise},
+    kernel::{matmul::matmul_forward, swiglu_elementwise::swiglu_elementwise},
     model_config::ModelConfig,
     util::random_f32,
 };
@@ -34,38 +34,32 @@ impl Ffn {
         cache: &mut FfnForwardCache,
     ) -> Vec<f32> {
         let seq = x.len() / cfg.d_model;
-        cache.pre_gate = matmul(
+        cache.pre_gate = matmul_forward(
             ctx,
             x,
             &self.w_gate,
             seq as u32,
             cfg.d_model as u32,
             cfg.d_ff as u32,
-            false,
-            false,
         );
 
-        cache.up = matmul(
+        cache.up = matmul_forward(
             ctx,
             x,
             &self.w_up,
             seq as u32,
             cfg.d_model as u32,
             cfg.d_ff as u32,
-            false,
-            false,
         );
 
         let a = swiglu_elementwise(ctx, &cache.pre_gate, &cache.up);
-        let y = matmul(
+        let y = matmul_forward(
             ctx,
             &a,
             &self.w_down,
             seq as u32,
             cfg.d_ff as u32,
             cfg.d_model as u32,
-            false,
-            false,
         );
 
         y
@@ -79,15 +73,17 @@ impl Ffn {
         x: &[f32],
         cache: &mut FfnForwardCache,
     ) -> Vec<f32> {
-        use crate::kernel::{matmul::matmul_cpu, swiglu_elementwise::swiglu_elementwise_cpu};
+        use crate::kernel::{
+            matmul::matmul_forward_cpu, swiglu_elementwise::swiglu_elementwise_cpu,
+        };
 
         let seq = x.len() / cfg.d_model;
-        cache.pre_gate = matmul_cpu(x, &self.w_gate, seq, cfg.d_model, cfg.d_ff, false, false);
+        cache.pre_gate = matmul_forward_cpu(x, &self.w_gate, seq, cfg.d_model, cfg.d_ff);
 
-        cache.up = matmul_cpu(x, &self.w_up, seq, cfg.d_model, cfg.d_ff, false, false);
+        cache.up = matmul_forward_cpu(x, &self.w_up, seq, cfg.d_model, cfg.d_ff);
 
         let a = swiglu_elementwise_cpu(&cache.pre_gate, &cache.up);
-        let y = matmul_cpu(&a, &self.w_down, seq, cfg.d_ff, cfg.d_model, false, false);
+        let y = matmul_forward_cpu(&a, &self.w_down, seq, cfg.d_ff, cfg.d_model);
 
         y
     }

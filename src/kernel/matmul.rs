@@ -4,7 +4,7 @@ use crate::gpu_context::GpuContext;
 
 const TILE: u32 = 16;
 
-pub fn matmul(
+fn matmul(
     ctx: &GpuContext,
     a: &[f32],
     b: &[f32],
@@ -118,9 +118,29 @@ pub fn matmul(
     bytemuck::allocation::pod_collect_to_vec(&data)
 }
 
+pub fn matmul_forward(ctx: &GpuContext, a: &[f32], b: &[f32], m: u32, k: u32, n: u32) -> Vec<f32> {
+    matmul(ctx, a, b, m, k, n, false, false)
+}
+
+pub fn matmul_backward(
+    ctx: &GpuContext,
+    grad_output: &[f32], // dY: (m × n)
+    a: &[f32],           // forward の X: (m × k)
+    b: &[f32],           // forward の W: (k × n)
+    m: u32,
+    k: u32,
+    n: u32,
+) -> (Vec<f32>, Vec<f32>) {
+    // dX = dY @ W^T
+    let grad_a = matmul(ctx, grad_output, b, m, n, k, false, true);
+    // dW = X^T @ dY
+    let grad_b = matmul(ctx, a, grad_output, k, m, n, true, false);
+    (grad_a, grad_b)
+}
+
 // CPU リファレンス
 #[cfg(test)]
-pub fn matmul_cpu(
+fn matmul_cpu(
     a: &[f32],
     b: &[f32],
     m: usize,
@@ -141,6 +161,27 @@ pub fn matmul_cpu(
         }
     }
     c
+}
+
+#[cfg(test)]
+pub fn matmul_forward_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+    matmul_cpu(a, b, m, k, n, false, false)
+}
+
+#[cfg(test)]
+pub fn matmul_backward_cpu(
+    grad_output: &[f32], // dY: (m × n)
+    a: &[f32],           // forward の X: (m × k)
+    b: &[f32],           // forward の W: (k × n)
+    m: usize,
+    k: usize,
+    n: usize,
+) -> (Vec<f32>, Vec<f32>) {
+    // dX = dY @ W^T
+    let grad_a = matmul_cpu(grad_output, b, m, n, k, false, true);
+    // dW = X^T @ dY
+    let grad_b = matmul_cpu(a, grad_output, k, m, n, true, false);
+    (grad_a, grad_b)
 }
 
 #[cfg(test)]
@@ -224,5 +265,33 @@ mod tests {
         let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, false, false);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-6);
+    }
+
+    #[test]
+    fn test_matmul_forward() {
+        let (m, k, n) = (10, 11, 12);
+        let a = random_f32(m * k, 42);
+        let b = random_f32(k * n, 43);
+
+        let cpu = matmul_forward_cpu(&a, &b, m, k, n);
+        let ctx = GpuContext::new();
+        let gpu = matmul_forward(&ctx, &a, &b, m as u32, k as u32, n as u32);
+
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_matmul_backward() {
+        let (m, k, n) = (10, 11, 12);
+        let dy = random_f32(m * n, 42);
+        let x = random_f32(m * k, 43);
+        let w = random_f32(k * n, 44);
+
+        let (cpu_dx, cpu_dw) = matmul_backward_cpu(&dy, &x, &w, m, k, n);
+        let ctx = GpuContext::new();
+        let (gpu_dx, gpu_dw) = matmul_backward(&ctx, &dy, &x, &w, m as u32, k as u32, n as u32);
+
+        assert_close(&cpu_dx, &gpu_dx, 1e-4, 1e-5);
+        assert_close(&cpu_dw, &gpu_dw, 1e-4, 1e-5);
     }
 }
