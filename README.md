@@ -56,6 +56,7 @@ src/
 |   |-- rms_norm_backward.wgsl
 |   |-- rms_norm.wgsl
 |   |-- rope.wgsl
+|   |-- swiglu_elementwise_backward.wgsl
 |   `-- swiglu_elementwise.wgsl
 |-- test_utils.rs
 `-- util.rs

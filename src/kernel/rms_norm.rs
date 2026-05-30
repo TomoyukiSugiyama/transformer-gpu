@@ -485,5 +485,4 @@ mod test {
         assert_close(&gpu_dx, &cpu_dx, 1e-4, 1e-5);
         assert_close(&gpu_dgamma, &cpu_dgamma, 1e-4, 1e-5);
     }
-
 }
