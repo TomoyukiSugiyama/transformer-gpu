@@ -4,7 +4,16 @@ use crate::gpu_context::GpuContext;
 
 const TILE: u32 = 16;
 
-pub fn matmul(ctx: &GpuContext, a: &[f32], b: &[f32], m: u32, k: u32, n: u32) -> Vec<f32> {
+pub fn matmul(
+    ctx: &GpuContext,
+    a: &[f32],
+    b: &[f32],
+    m: u32,
+    k: u32,
+    n: u32,
+    trans_a: bool,
+    trans_b: bool,
+) -> Vec<f32> {
     let byte_size = (m * n * 4) as u64;
     let buf_a = ctx
         .device
@@ -27,7 +36,7 @@ pub fn matmul(ctx: &GpuContext, a: &[f32], b: &[f32], m: u32, k: u32, n: u32) ->
         mapped_at_creation: false,
     });
 
-    let dims_padded: [u32; 4] = [m, k, n, 0];
+    let dims_padded: [u32; 8] = [m, k, n, trans_a as u32, trans_b as u32, 0, 0, 0];
     let buf_dims = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -111,12 +120,23 @@ pub fn matmul(ctx: &GpuContext, a: &[f32], b: &[f32], m: u32, k: u32, n: u32) ->
 
 // CPU リファレンス
 #[cfg(test)]
-pub fn matmul_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+pub fn matmul_cpu(
+    a: &[f32],
+    b: &[f32],
+    m: usize,
+    k: usize,
+    n: usize,
+    trans_a: bool,
+    trans_b: bool,
+) -> Vec<f32> {
     let mut c = vec![0.0f32; m * n];
+
     for i in 0..m {
         for j in 0..n {
             for p in 0..k {
-                c[i * n + j] += a[i * k + p] * b[p * n + j];
+                let a_val = if trans_a { a[p * m + i] } else { a[i * k + p] };
+                let b_val = if trans_b { b[j * k + p] } else { b[p * n + j] };
+                c[i * n + j] += a_val * b_val;
             }
         }
     }
@@ -136,7 +156,7 @@ mod tests {
         let eye: Vec<f32> = (0..16)
             .map(|i| if i / 4 == i % 4 { 1.0 } else { 0.0 })
             .collect();
-        let gpu = matmul(&ctx, &a, &eye, m as u32, k as u32, n as u32);
+        let gpu = matmul(&ctx, &a, &eye, m as u32, k as u32, n as u32, false, false);
         assert_close(&gpu, &a, 1e-4, 1e-5);
     }
 
@@ -147,9 +167,48 @@ mod tests {
         let a = random_f32(m * k, 42);
         let b = random_f32(k * n, 43);
 
-        let cpu = matmul_cpu(&a, &b, m, k, n);
+        let cpu = matmul_cpu(&a, &b, m, k, n, false, false);
         let ctx = GpuContext::new();
-        let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32);
+        let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, false, false);
+
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_trans_a() {
+        let (m, k, n) = (3, 5, 7);
+        let a = random_f32(m * k, 42);
+        let b = random_f32(k * n, 43);
+
+        let cpu = matmul_cpu(&a, &b, m, k, n, true, false);
+        let ctx = GpuContext::new();
+        let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, true, false);
+
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_trans_b() {
+        let (m, k, n) = (3, 5, 7);
+        let a = random_f32(m * k, 42);
+        let b = random_f32(k * n, 43);
+
+        let cpu = matmul_cpu(&a, &b, m, k, n, false, true);
+        let ctx = GpuContext::new();
+        let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, false, true);
+
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_trans_ab() {
+        let (m, k, n) = (3, 5, 7);
+        let a = random_f32(m * k, 42);
+        let b = random_f32(k * n, 43);
+
+        let cpu = matmul_cpu(&a, &b, m, k, n, true, true);
+        let ctx = GpuContext::new();
+        let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, true, true);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
@@ -160,9 +219,9 @@ mod tests {
         let a = random_f32(m * k, 1);
         let b = random_f32(k * n, 2);
 
-        let cpu = matmul_cpu(&a, &b, m, k, n);
+        let cpu = matmul_cpu(&a, &b, m, k, n, false, false);
         let ctx = GpuContext::new();
-        let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32);
+        let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, false, false);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-6);
     }

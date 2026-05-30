@@ -58,6 +58,8 @@ impl Attention {
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
+            false,
+            false,
         );
         cache.k = matmul(
             ctx,
@@ -66,6 +68,8 @@ impl Attention {
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
+            false,
+            false,
         );
         cache.v = matmul(
             ctx,
@@ -74,6 +78,8 @@ impl Attention {
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
+            false,
+            false,
         );
         let q_heads = split_columns(
             &cache.q,
@@ -124,6 +130,8 @@ impl Attention {
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
+            false,
+            false,
         )
     }
 
@@ -147,9 +155,9 @@ impl Attention {
         let seq = x.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
-        cache.q = matmul_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model);
-        cache.k = matmul_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model);
-        cache.v = matmul_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model);
+        cache.q = matmul_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model, false, false);
+        cache.k = matmul_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model, false, false);
+        cache.v = matmul_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model, false, false);
         let q_heads = split_columns(
             &cache.q,
             cfg.d_model as usize,
@@ -197,7 +205,15 @@ impl Attention {
             cfg.n_heads as usize,
         );
 
-        matmul_cpu(&cache.wo_in, &self.w_o, seq, cfg.d_model, cfg.d_model)
+        matmul_cpu(
+            &cache.wo_in,
+            &self.w_o,
+            seq,
+            cfg.d_model,
+            cfg.d_model,
+            false,
+            false,
+        )
     }
 }
 

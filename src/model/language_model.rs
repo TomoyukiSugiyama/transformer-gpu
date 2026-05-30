@@ -78,6 +78,8 @@ impl LanguageModel {
             seq as u32,
             cfg.d_model as u32,
             cfg.vocab_size as u32,
+            false,
+            false,
         );
 
         cache.logits.clone()
@@ -116,6 +118,8 @@ impl LanguageModel {
             seq,
             cfg.d_model,
             cfg.vocab_size,
+            false,
+            false,
         );
 
         cache.logits.clone()

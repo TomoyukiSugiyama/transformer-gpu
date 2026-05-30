@@ -41,6 +41,8 @@ impl Ffn {
             seq as u32,
             cfg.d_model as u32,
             cfg.d_ff as u32,
+            false,
+            false,
         );
 
         cache.up = matmul(
@@ -50,6 +52,8 @@ impl Ffn {
             seq as u32,
             cfg.d_model as u32,
             cfg.d_ff as u32,
+            false,
+            false,
         );
 
         let a = swiglu_elementwise(ctx, &cache.pre_gate, &cache.up);
@@ -60,6 +64,8 @@ impl Ffn {
             seq as u32,
             cfg.d_ff as u32,
             cfg.d_model as u32,
+            false,
+            false,
         );
 
         y
@@ -76,12 +82,12 @@ impl Ffn {
         use crate::kernel::{matmul::matmul_cpu, swiglu_elementwise::swiglu_elementwise_cpu};
 
         let seq = x.len() / cfg.d_model;
-        cache.pre_gate = matmul_cpu(x, &self.w_gate, seq, cfg.d_model, cfg.d_ff);
+        cache.pre_gate = matmul_cpu(x, &self.w_gate, seq, cfg.d_model, cfg.d_ff, false, false);
 
-        cache.up = matmul_cpu(x, &self.w_up, seq, cfg.d_model, cfg.d_ff);
+        cache.up = matmul_cpu(x, &self.w_up, seq, cfg.d_model, cfg.d_ff, false, false);
 
         let a = swiglu_elementwise_cpu(&cache.pre_gate, &cache.up);
-        let y = matmul_cpu(&a, &self.w_down, seq, cfg.d_ff, cfg.d_model);
+        let y = matmul_cpu(&a, &self.w_down, seq, cfg.d_ff, cfg.d_model, false, false);
 
         y
     }
