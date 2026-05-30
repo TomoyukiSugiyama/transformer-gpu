@@ -109,6 +109,123 @@ pub fn embedding(ctx: &GpuContext, token_ids: &[u32], weight: &[f32], d_model: u
     bytemuck::allocation::pod_collect_to_vec(&data)
 }
 
+pub fn embedding_backward(
+    ctx: &GpuContext,
+    dy: &[f32],
+    token_ids: &[u32],
+    seq_len: usize,
+    vocab_size: usize,
+    d_model: usize,
+) -> Vec<f32> {
+    let size = (vocab_size * d_model) as u32;
+    let byte_size = (size * 4) as u64;
+    let buf_dy = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dy"),
+            contents: bytemuck::cast_slice(&dy),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let buf_token_ids = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("token_ids"),
+            contents: bytemuck::cast_slice(&token_ids),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+    let zeros = vec![0i32; vocab_size * d_model];
+    let buf_dweight = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dweight"),
+            contents: bytemuck::cast_slice(&zeros),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        });
+
+    let dims_padded: [u32; 4] = [d_model as u32, seq_len as u32, 0, 0];
+    let buf_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+    let module = ctx
+        .device
+        .create_shader_module(wgpu::include_wgsl!("../shader/embedding_backward.wgsl"));
+    let pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("embedding_backward"),
+            layout: None,
+            module: &module,
+            entry_point: Some("embedding_backward"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buf_dy.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buf_token_ids.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buf_dweight.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: buf_dims.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+
+        let seq_size = (seq_len * d_model) as u32;
+        pass.dispatch_workgroups(seq_size.div_ceil(SIZE), 1, 1);
+    }
+
+    let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: byte_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_buffer_to_buffer(&buf_dweight, 0, &buf_read, 0, byte_size);
+    ctx.queue.submit([encoder.finish()]);
+
+    let slice = buf_read.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+
+    ctx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+
+    let data = slice.get_mapped_range();
+    bytemuck::allocation::pod_collect_to_vec(&data)
+}
+
 // CPU リファレンス
 #[cfg(test)]
 pub fn embedding_cpu(token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f32> {
@@ -122,10 +239,32 @@ pub fn embedding_cpu(token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f
 }
 
 #[cfg(test)]
+pub fn embedding_backward_cpu(
+    dy: &[f32],
+    token_ids: &[u32],
+    vocab_size: usize,
+    d_model: usize,
+) -> Vec<f32> {
+    let mut dweight = vec![0.0f32; vocab_size * d_model];
+
+    // dweight[t*d + j] = dy[pos*d + j]
+    // token_ids[pos] = t
+    for (pos, &id) in token_ids.iter().enumerate() {
+        let src = pos * d_model;
+        let dst = id as usize * d_model;
+        for j in 0..d_model {
+            dweight[dst + j] += dy[src + j];
+        }
+    }
+
+    dweight
+}
+
+#[cfg(test)]
 mod test {
     use crate::{
         gpu_context::GpuContext,
-        kernel::embedding::{embedding, embedding_cpu},
+        kernel::embedding::{embedding, embedding_backward, embedding_backward_cpu, embedding_cpu},
     };
 
     #[test]
@@ -139,6 +278,26 @@ mod test {
         let gpu = embedding(&ctx, &token_ids, &weight, d_model);
 
         let exp = vec![3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+
+        assert_eq!(cpu, exp);
+        assert_eq!(gpu, exp);
+    }
+
+    #[test]
+    fn test_embedding_backward() {
+        let token_ids = vec![1, 2, 3, 4];
+        let dy = vec![3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let vocab_size = 5;
+        let seq_len = token_ids.len();
+        let d_model = 2;
+
+        let cpu = embedding_backward_cpu(&dy, &token_ids, vocab_size, d_model);
+        let ctx = GpuContext::new();
+        let gpu = embedding_backward(&ctx, &dy, &token_ids, seq_len, vocab_size, d_model);
+
+        // dweight[t*d + j] = dy[pos*d + j]
+        // token_ids[pos] = t
+        let exp = vec![0.0, 0.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
 
         assert_eq!(cpu, exp);
         assert_eq!(gpu, exp);

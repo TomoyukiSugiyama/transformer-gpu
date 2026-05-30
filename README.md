@@ -49,6 +49,7 @@ src/
 |-- shader/     # WGSL: GPU 上で動く計算本体
 |   |-- attention.wgsl
 |   |-- cross_entropy_loss.wgsl
+|   |-- embedding_backward.wgsl
 |   |-- embedding.wgsl
 |   |-- flash_attention.wgsl
 |   |-- matmul.wgsl
