@@ -2,19 +2,11 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu_context::GpuContext;
 
-const WG: u32 = 256;
-
 pub fn rms_norm(ctx: &GpuContext, x: &[f32], gamma: &[f32], eps: f32, d_model: u32) -> Vec<f32> {
     assert_eq!(
         x.len() as u32 % d_model,
         0,
         "x.len() must be divisible by d_model"
-    );
-    assert!(
-        d_model <= WG,
-        "d_model={} exceeds workgroup_size={}",
-        d_model,
-        WG
     );
     let seq = x.len() as u32 / d_model;
     let byte_size = (seq * d_model * 4) as u64;
@@ -133,12 +125,6 @@ pub fn rms_norm_backward(
         x.len() as u32 % d_model,
         0,
         "x.len() must be divisible by d_model"
-    );
-    assert!(
-        d_model <= WG,
-        "d_model={} exceeds workgroup_size={}",
-        d_model,
-        WG
     );
     let seq = x.len() as u32 / d_model;
     let byte_size = (seq * d_model * 4) as u64;
@@ -467,4 +453,37 @@ mod test {
         assert_close(&gpu_dx, &cpu_dx, 1e-4, 1e-5);
         assert_close(&gpu_dgamma, &cpu_dgamma, 1e-4, 1e-5);
     }
+
+    #[test]
+    fn test_rms_norm_d512() {
+        let seq = 4;
+        let d_model = 512;
+        let len = seq * d_model;
+        let gamma: Vec<f32> = vec![1.0; d_model];
+        let eps = 1e-6;
+        let x = random_f32(len, 42);
+        let cpu = rms_norm_cpu(&x, &gamma, eps, d_model);
+        let ctx = GpuContext::new();
+        let gpu = rms_norm(&ctx, &x, &gamma, eps, d_model as u32);
+
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_rms_norm_backward_512d() {
+        let seq = 4;
+        let d_model = 512;
+        let len = seq * d_model;
+        let dy = random_f32(len, 41);
+        let gamma: Vec<f32> = vec![1.0; d_model];
+        let eps = 1e-6;
+        let x = random_f32(len, 42);
+        let (cpu_dx, cpu_dgamma) = rms_norm_backward_cpu(&dy, &x, &gamma, eps, d_model);
+        let ctx = GpuContext::new();
+        let (gpu_dx, gpu_dgamma) = rms_norm_backward(&ctx, &dy, &x, &gamma, eps, d_model as u32);
+
+        assert_close(&gpu_dx, &cpu_dx, 1e-4, 1e-5);
+        assert_close(&gpu_dgamma, &cpu_dgamma, 1e-4, 1e-5);
+    }
+
 }
