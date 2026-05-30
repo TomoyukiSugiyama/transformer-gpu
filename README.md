@@ -55,6 +55,7 @@ src/
 |   |-- residual_add.wgsl
 |   |-- rms_norm_backward.wgsl
 |   |-- rms_norm.wgsl
+|   |-- rope_backward.wgsl
 |   |-- rope.wgsl
 |   |-- swiglu_elementwise_backward.wgsl
 |   `-- swiglu_elementwise.wgsl
