@@ -113,10 +113,10 @@ pub fn embedding_backward(
     ctx: &GpuContext,
     dy: &[f32],
     token_ids: &[u32],
-    seq_len: usize,
     vocab_size: usize,
     d_model: usize,
 ) -> Vec<f32> {
+    let seq_len = token_ids.len();
     let size = (vocab_size * d_model) as u32;
     let byte_size = (size * 4) as u64;
     let buf_dy = ctx
@@ -288,12 +288,11 @@ mod test {
         let token_ids = vec![1, 2, 3, 4];
         let dy = vec![3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
         let vocab_size = 5;
-        let seq_len = token_ids.len();
         let d_model = 2;
 
         let cpu = embedding_backward_cpu(&dy, &token_ids, vocab_size, d_model);
         let ctx = GpuContext::new();
-        let gpu = embedding_backward(&ctx, &dy, &token_ids, seq_len, vocab_size, d_model);
+        let gpu = embedding_backward(&ctx, &dy, &token_ids, vocab_size, d_model);
 
         // dweight[t*d + j] = dy[pos*d + j]
         // token_ids[pos] = t
