@@ -42,7 +42,7 @@ fn rms_norm(
     // stride = 1: tile[0]+=tile[1]
     var stride = WG / 2u; // 256 / 2 = 128
     loop {
-        if stride == 0u { break;}
+        if stride == 0u { break; }
         if lid.x < stride {
             tile[lid.x] += tile[lid.x + stride]; // 0 + 128 ~ 255 + 128
         }

@@ -30,6 +30,7 @@ src/
 |   |-- adam_w.rs
 |   |-- attention.rs
 |   |-- cross_entropy_loss.rs
+|   |-- embedding.rs
 |   |-- matmul.rs
 |   |-- mod.rs
 |   |-- residual_add.rs
@@ -39,18 +40,20 @@ src/
 |-- lib.rs
 |-- main.rs
 |-- model/      # Transformer のブロック構成（kernel を組み合わせる）
+|   |-- attention.rs
 |   |-- ffn.rs
 |   |-- language_model.rs
 |   |-- mod.rs
-|   |-- multi_head_attention.rs
 |   `-- transformer_block.rs
 |-- model_config.rs
 |-- shader/     # WGSL: GPU 上で動く計算本体
 |   |-- attention.wgsl
 |   |-- cross_entropy_loss.wgsl
+|   |-- embedding.wgsl
 |   |-- flash_attention.wgsl
 |   |-- matmul.wgsl
 |   |-- residual_add.wgsl
+|   |-- rms_norm_backward.wgsl
 |   |-- rms_norm.wgsl
 |   |-- rope.wgsl
 |   `-- swiglu_elementwise.wgsl
