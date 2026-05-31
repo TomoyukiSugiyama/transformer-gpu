@@ -143,6 +143,178 @@ pub fn attention(
     (o, l)
 }
 
+pub fn attention_backward(
+    ctx: &GpuContext,
+    do_: &[f32], // [seq, d_head]
+    q: &[f32],   // [seq, d_head]
+    k: &[f32],   // [seq, d_head]
+    v: &[f32],   // [seq, d_head]
+    o: &[f32],   // [seq, d_head]
+    l: &[f32],   // [seq]
+    seq: u32,
+    d_head: u32,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let n = (seq * d_head) as usize;
+
+    // D[i] = rowsum(o[i] * do_[i]) を事前計算
+    let d_vec: Vec<f32> = (0..seq as usize)
+        .map(|i| {
+            (0..d_head as usize)
+                .map(|d| o[i * d_head as usize + d] * do_[i * d_head as usize + d])
+                .sum()
+        })
+        .collect();
+
+    let mut inputs = Vec::with_capacity(n * 4 + seq as usize * 2);
+    inputs.extend_from_slice(do_);
+    inputs.extend_from_slice(q);
+    inputs.extend_from_slice(k);
+    inputs.extend_from_slice(v);
+    inputs.extend_from_slice(l);
+    inputs.extend_from_slice(&d_vec);
+
+    let buf_inputs = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("inputs"),
+            contents: bytemuck::cast_slice(&inputs),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+    let zero_i32 = vec![0i32; n];
+    let buf_dq = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dq"),
+            contents: bytemuck::cast_slice(&zero_i32),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        });
+
+    let zero_f32 = vec![0.0f32; n];
+    let buf_dk = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dk"),
+            contents: bytemuck::cast_slice(&zero_f32),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        });
+    let buf_dv = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dv"),
+            contents: bytemuck::cast_slice(&zero_f32),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        });
+
+    let dims_padded: [u32; 4] = [seq, d_head, 0, 0];
+    let buf_dims = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dims"),
+            contents: bytemuck::cast_slice(&dims_padded),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+    let module = ctx.device.create_shader_module(wgpu::include_wgsl!(
+        "../shader/flash_attention_backward.wgsl"
+    ));
+    let pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("attention_backward"),
+            layout: None,
+            module: &module,
+            entry_point: Some("attention_backward"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buf_inputs.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buf_dq.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buf_dk.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: buf_dv.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: buf_dims.as_entire_binding(),
+            },
+        ],
+    });
+
+    let byte_size = (n * 4) as u64;
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(seq, 1, 1);
+    }
+
+    let read_dq = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: byte_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let read_dk = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: byte_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let read_dv = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: byte_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    encoder.copy_buffer_to_buffer(&buf_dq, 0, &read_dq, 0, byte_size);
+    encoder.copy_buffer_to_buffer(&buf_dk, 0, &read_dk, 0, byte_size);
+    encoder.copy_buffer_to_buffer(&buf_dv, 0, &read_dv, 0, byte_size);
+    ctx.queue.submit([encoder.finish()]);
+
+    // dq は i32 bits → f32 に変換
+    let dq = read_gpu_buffer::<i32>(ctx, &read_dq)
+        .iter()
+        .map(|&x| f32::from_bits(x as u32))
+        .collect();
+    let dk = read_gpu_buffer::<f32>(ctx, &read_dk);
+    let dv = read_gpu_buffer::<f32>(ctx, &read_dv);
+
+    (dq, dk, dv)
+}
+
+fn read_gpu_buffer<T: bytemuck::Pod>(ctx: &GpuContext, buf: &wgpu::Buffer) -> Vec<T> {
+    let slice = buf.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    ctx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    let data = slice.get_mapped_range();
+    bytemuck::allocation::pod_collect_to_vec(&data)
+}
+
 /// Flash Attention 導入前の実装、ベンチで利用
 #[allow(dead_code)]
 pub fn before_flash_attention(
@@ -420,6 +592,84 @@ pub fn attention_cpu(
 }
 
 #[cfg(test)]
+pub fn attention_backward_cpu(
+    do_: &[f32], // [seq, d_head]
+    q: &[f32],   // [seq, d_head]
+    k: &[f32],   // [seq, d_head]
+    v: &[f32],   // [seq, d_head]
+    o: &[f32],   // [seq, d_head]
+    l: &[f32],   // [seq]
+    seq: usize,
+    d_head: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    assert_eq!(q.len(), (seq * d_head) as usize, "q must be seq×d_head");
+    assert_eq!(k.len(), (seq * d_head) as usize, "k must be seq×d_head");
+    assert_eq!(v.len(), (seq * d_head) as usize, "v must be seq×d_head");
+
+    // 1 / √d_k
+    let scale = 1.0 / (d_head as f32).sqrt();
+
+    // D[i] = rowsum(o[i] * do_[i])
+    let mut d_vec = vec![0.0f32; seq];
+    for i in 0..seq {
+        d_vec[i] = (0..d_head)
+            .map(|d| o[i * d_head + d] * do_[i * d_head + d])
+            .sum()
+    }
+    // S[i,j] = Q[i]・K[j]^T * scale (causal mask)
+    let mut scores = vec![f32::NEG_INFINITY; seq * seq];
+    for i in 0..seq {
+        for j in 0..=i {
+            scores[i * seq + j] = (0..d_head)
+                .map(|d| q[i * d_head + d] * k[j * d_head + d])
+                .sum::<f32>()
+                * scale;
+        }
+    }
+
+    // softmax
+    // P[i,j] = exp(S[i,j] - L[i])
+    let mut p = vec![0.0f32; seq * seq];
+    for i in 0..seq {
+        for j in 0..=i {
+            p[i * seq + j] = (scores[i * seq + j] - l[i]).exp()
+        }
+    }
+
+    let mut dq = vec![0.0f32; seq * d_head];
+    let mut dk = vec![0.0f32; seq * d_head];
+    let mut dv = vec![0.0f32; seq * d_head];
+
+    for i in 0..seq {
+        for j in 0..=i {
+            let p_ij = p[i * seq + j];
+
+            // dV[j] += P[i,j] * do_[i]
+            for d in 0..d_head {
+                dv[j * d_head + d] += p_ij * do_[i * d_head + d];
+            }
+
+            // dS[i,j] = P[i,j] * (do_[i]・V[j] - D[i])
+            let do_v_j: f32 = (0..d_head)
+                .map(|d| do_[i * d_head + d] * v[j * d_head + d])
+                .sum();
+            let ds_ij = p_ij * (do_v_j - d_vec[i]);
+
+            // dQ[i] += scale * dS[i,j] * K[j]
+            for d in 0..d_head {
+                dq[i * d_head + d] += scale * ds_ij * k[j * d_head + d];
+            }
+            // dK[j] += scale * dS[i,j] * Q[i]
+            for d in 0..d_head {
+                dk[j * d_head + d] += scale * ds_ij * q[i * d_head + d];
+            }
+        }
+    }
+
+    (dq, dk, dv)
+}
+
+#[cfg(test)]
 mod test {
     use super::*;
     use crate::{test_utils::assert_close, util::random_f32};
@@ -444,10 +694,104 @@ mod test {
         // => 1.0
         // fa_score * V
         // => 1.0 * 4.0 = 4.0
+        assert_eq!(cpu_o.len(), 1);
+        assert_eq!(cpu_l.len(), 1);
         assert!((cpu_o[0] - 4.0).abs() < 1e-4);
+        assert_eq!(gpu_o.len(), 1);
+        assert_eq!(gpu_l.len(), 1);
         assert!((gpu_o[0] - 4.0).abs() < 1e-4);
         assert_close(&gpu_o, &cpu_o, 1e-4, 1e-5);
         assert_close(&gpu_l, &cpu_l, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_backward_row() {
+        let seq: usize = 1;
+        let d_head: usize = 1;
+        let do_: Vec<f32> = vec![5.0];
+        let q: Vec<f32> = vec![2.0];
+        let k: Vec<f32> = vec![3.0];
+        let v: Vec<f32> = vec![4.0];
+        let o: Vec<f32> = vec![6.0];
+        let l: Vec<f32> = vec![7.0];
+
+        // scale = 1 / √d_k
+        // scale = 1
+
+        // D[i] = rowsum(o[i] * do_[i])
+        // D = 30.0
+
+        // S[i,j] = Q[i]・K[j]^T * scale (causal mask)
+        // S[i,j] = 6.0
+
+        // softmax
+        // P[i,j] = exp(S[i,j] - L[i])
+        // P[i,j] = exp(-1) = 0.36787
+
+        // dV[j] += P[i,j] * do_[i]
+        // dV[j] = 0.36787*5.0 = 1.83935
+
+        // dS[i,j] = P[i,j] * (do_[i]・V[j] - D[i])
+        // dS[i,j] = 0.36787*(5.0*4.0-30) = -3.6787
+        // dQ[i] += scale * dS[i,j] * K[j]
+        // dQ[i] = -3.6787*3.0 = -11.0361
+        // dK[j] += scale * dS[i,j] * Q[i]
+        // dK[j] = -3.6787*2.0 = -7.3574
+        let (exp_dq, exp_dk, exp_dv) = (vec![-11.0361], vec![-7.3574], vec![1.83935]);
+        let (cpu_dq, cpu_dk, cpu_dv) =
+            attention_backward_cpu(&do_, &q, &k, &v, &o, &l, seq, d_head);
+        let ctx = GpuContext::new();
+        let (gpu_dq, gpu_dk, gpu_dv) =
+            attention_backward(&ctx, &do_, &q, &k, &v, &o, &l, seq as u32, d_head as u32);
+
+        assert_eq!(cpu_dq.len(), 1);
+        assert_eq!(cpu_dk.len(), 1);
+        assert_eq!(cpu_dv.len(), 1);
+        assert!(
+            (cpu_dq[0] - exp_dq[0]).abs() < 1e-3,
+            "cpu dq={},exp={}",
+            cpu_dq[0],
+            exp_dq[0]
+        );
+        assert!(
+            (cpu_dk[0] - exp_dk[0]).abs() < 1e-3,
+            "cpu dk={},exp={}",
+            cpu_dk[0],
+            exp_dk[0]
+        );
+        assert!(
+            (cpu_dv[0] - exp_dv[0]).abs() < 1e-3,
+            "cpu dv={},exp={}",
+            cpu_dv[0],
+            exp_dv[0]
+        );
+
+        assert_eq!(gpu_dq.len(), 1);
+        assert_eq!(gpu_dk.len(), 1);
+        assert_eq!(gpu_dv.len(), 1);
+
+        assert!(
+            (gpu_dq[0] - exp_dq[0]).abs() < 1e-3,
+            "gpu dq={},exp={}",
+            gpu_dq[0],
+            exp_dq[0]
+        );
+        assert!(
+            (gpu_dk[0] - exp_dk[0]).abs() < 1e-3,
+            "gpu dk={},exp={}",
+            gpu_dk[0],
+            exp_dk[0]
+        );
+        assert!(
+            (gpu_dv[0] - exp_dv[0]).abs() < 1e-3,
+            "gpu dv={},exp={}",
+            gpu_dv[0],
+            exp_dv[0]
+        );
+
+        assert_close(&gpu_dq, &cpu_dq, 1e-4, 1e-5);
+        assert_close(&gpu_dk, &cpu_dk, 1e-4, 1e-5);
+        assert_close(&gpu_dv, &cpu_dv, 1e-4, 1e-5);
     }
 
     #[test]
@@ -488,7 +832,7 @@ mod test {
         assert!((&cpu_o[1] - &exp[1]).abs() < 1e-4);
         assert!((&cpu_o[2] - &exp[2]).abs() < 1e-4);
         assert!((&cpu_o[3] - &exp[3]).abs() < 1e-4);
-        let exp: Vec<f32> = vec![0.0, 1.0, 0.5, 1.0];
+
         assert!(
             (&gpu_o[0] - &exp[0]).abs() < 1e-4,
             "out[0] = {}, exp[0] = {}",
@@ -518,6 +862,108 @@ mod test {
     }
 
     #[test]
+    fn test_casual_backward_mask() {
+        let seq: usize = 2;
+        let d_head: usize = 2;
+        let do_: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0];
+        let q: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0];
+        let k: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0];
+        let v: Vec<f32> = vec![0.0, 1.0, 1.0, 1.0];
+        let o: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0];
+        let l: Vec<f32> = vec![1.0, 1.0];
+        let (cpu_dq, cpu_dk, cpu_dv) =
+            attention_backward_cpu(&do_, &q, &k, &v, &o, &l, seq, d_head);
+        let ctx = GpuContext::new();
+        let (gpu_dq, gpu_dk, gpu_dv) =
+            attention_backward(&ctx, &do_, &q, &k, &v, &o, &l, seq as u32, d_head as u32);
+
+        // scale = 1 / √d_k
+        // scale = 0.70710
+
+        // q            k           v
+        // | 1.0 0.0 | | 1.0 1.0 | | 0.0 1.0 |
+        // | 0.0 1.0 | | 1.0 1.0 | | 1.0 1.0 |
+
+        // do_          o            l
+        // | 1.0 1.0 | | 1.0 1.0 | | 1.0 1.0 |
+        // | 1.0 1.0 | | 1.0 1.0 |
+
+        // D[i] = rowsum(o[i] * do_[i])
+        // D[0] = 1.0*1.0 + 1.0*1.0 = 2.0
+        // D[1] = 1.0*1.0 + 1.0*1.0 = 2.0
+
+        // S[i,j] = Q[i]・K[j]^T * scale (causal mask)
+        // | 0.7071 -∞      |
+        // | 0.7071 0.7071 |
+
+        // softmax
+        // P[i,j] = exp(S[i,j] - L[i])
+        // | exp(0.7071-1) exp(-∞-1)     |
+        // | exp(0.7071-1) exp(0.7071-1) |
+        // =
+        // | 0.74609 0       |
+        // | 0.74609 0.74609 |
+
+        // dV[j] += P[i,j] * do_[i]
+        // dV[0][0] = P[0][0]*do_[0][0] + P[0][0]*do_[0][1]
+        // dV[0][1] = P[1][0]*do_[1][0] + P[1][0]*do_[1][1]
+        // | 0.74609+0.74609 0.74609+0.74609 |
+        // = | 1.49218 1.49218 |
+        // dV[1][0] = P[1][1]*do_[1][0]
+        // dV[1][1] = P[1][1]*do_[1][1]
+        // | 0.74609 0.74609 |
+        //
+        // dS[i,j] = P[i,j] * (do_[i]・V[j] - D[i])
+        // do_[i]・V[j]
+        // | 1.0 1.0 | | 0.0 1.0 |
+        // | 1.0 1.0 | | 1.0 1.0 |
+        // do_[0]・V[0] = 1.0
+        // P[0][0] = 0.74609
+        // D[0] = 2.0
+        // dS[0,0] = 0.74609 * (1.0 - 2.0) = -0.74609
+        //
+        // do_[1]・V[0] = 1.0
+        // do_[1]・V[1] = 2.0
+        // P[1][0] = 0.74609
+        // P[1][1] = 0.74609
+        // D[1] = 4.0
+        // dS[1,0] = 0.74609 * (1.0 - 2.0) = -0.74609
+        // dS[1,1] = 0.74609 * (2.0 - 2.0) = 0.0
+
+        // dQ[i] += scale * dS[i,j] * K[j]
+        // dQ[0] = | (0.70710 * (-0.74609) * 1.0) (0.70710 * (-0.74609) * 1.0) |
+        //       = | -0.52756 -0.52756 |
+        // dQ[1] = | (0.70710 * (-0.74609) * 1.0) (0.70710 * (-0.74609) * 1.0) |
+        //       + | (0.70710 * 0.0 * 1.0)        (0.70710 * 0.0 * 1.0)        |
+        //       = | -0.52756 -0.52756 |
+
+        // dK[j] += scale * dS[i,j] * Q[i]
+        // dK[0] = | (0.70710 * (-0.74609) * 1.0) (0.70710 * (-0.74609) * 0.0) |
+        //       + | (0.70710 * (-0.74609) * 0.0) (0.70710 * (-0.74609) * 1.0) |
+        //       = | -0.52756 -0.52756 |
+        // dK[1] = | (0.70710 * 0.0 * 0.0)        (0.70710 * 0.0 * 1.0) |
+        //       = | 0.0 0.0 |
+
+        let exp_dq: Vec<f32> = vec![-0.52756, -0.52756, -0.52756, -0.52756];
+        let exp_dk: Vec<f32> = vec![-0.52756, -0.52756, 0.0, 0.0];
+        let exp_dv: Vec<f32> = vec![1.49218, 1.49218, 0.74609, 0.74609];
+        assert_eq!(l.len(), seq, "l must be seq");
+        assert_eq!(o.len(), seq * d_head, "o must be seq×d_head");
+        assert_eq!(do_.len(), seq * d_head, "do_ must be seq×d_head");
+        assert_close(&cpu_dq, &exp_dq, 1e-4, 1e-5);
+        assert_close(&cpu_dk, &exp_dk, 1e-4, 1e-5);
+        assert_close(&cpu_dv, &exp_dv, 1e-4, 1e-5);
+
+        assert_close(&gpu_dq, &exp_dq, 1e-4, 1e-5);
+        assert_close(&gpu_dk, &exp_dk, 1e-4, 1e-5);
+        assert_close(&gpu_dv, &exp_dv, 1e-4, 1e-5);
+
+        assert_close(&gpu_dq, &cpu_dq, 1e-4, 1e-5);
+        assert_close(&gpu_dk, &cpu_dk, 1e-4, 1e-5);
+        assert_close(&gpu_dv, &cpu_dv, 1e-4, 1e-5);
+    }
+
+    #[test]
     fn test_attention_random() {
         let seq: usize = 1024;
         let d_head: usize = 64;
@@ -533,7 +979,26 @@ mod test {
         assert_close(&gpu_o, &cpu_o, 1e-4, 1e-5);
         assert_close(&gpu_l, &cpu_l, 1e-4, 1e-5);
     }
+    #[test]
+    fn test_attention_backward_random() {
+        let seq: usize = 1024;
+        let d_head: usize = 64;
+        let do_: Vec<f32> = random_f32(seq * d_head, 32);
+        let q: Vec<f32> = random_f32(seq * d_head, 33);
+        let k: Vec<f32> = random_f32(seq * d_head, 34);
+        let v: Vec<f32> = random_f32(seq * d_head, 35);
+        let o: Vec<f32> = random_f32(seq * d_head, 36);
+        let l: Vec<f32> = random_f32(seq, 37);
+        let (cpu_dq, cpu_dk, cpu_dv) =
+            attention_backward_cpu(&do_, &q, &k, &v, &o, &l, seq, d_head);
+        let ctx = GpuContext::new();
+        let (gpu_dq, gpu_dk, gpu_dv) =
+            attention_backward(&ctx, &do_, &q, &k, &v, &o, &l, seq as u32, d_head as u32);
 
+        assert_close(&gpu_dq, &cpu_dq, 1e-3, 1e-4);
+        assert_close(&gpu_dk, &cpu_dk, 1e-3, 1e-4);
+        assert_close(&gpu_dv, &cpu_dv, 1e-3, 1e-4);
+    }
     #[test]
     fn test_attention_non_power_of_two() {
         let seq: usize = 7;

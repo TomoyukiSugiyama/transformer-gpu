@@ -51,6 +51,7 @@ src/
 |   |-- cross_entropy_loss.wgsl
 |   |-- embedding_backward.wgsl
 |   |-- embedding.wgsl
+|   |-- flash_attention_backward.wgsl
 |   |-- flash_attention.wgsl
 |   |-- matmul.wgsl
 |   |-- residual_add.wgsl

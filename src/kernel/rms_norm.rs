@@ -470,7 +470,7 @@ mod test {
     }
 
     #[test]
-    fn test_rms_norm_backward_512d() {
+    fn test_rms_norm_backward_d512() {
         let seq = 4;
         let d_model = 512;
         let len = seq * d_model;
