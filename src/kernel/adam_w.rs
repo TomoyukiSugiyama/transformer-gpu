@@ -146,7 +146,7 @@ mod tests {
     fn test_adamw_grad_scale() {
         let mut opt1 = AdamW::new(0.001);
         let mut opt2 = AdamW::new(0.001);
-        
+
         // バッチサイズ 4 で平均
         opt2.set_grad_scale(4);
 

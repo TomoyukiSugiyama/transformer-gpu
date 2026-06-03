@@ -1,4 +1,4 @@
-mod adam_w; // G-1-5
+pub mod adam_w; // G-1-5
 pub mod attention; // G-1-3
 pub mod cross_entropy_loss; //G-1-5
 pub mod embedding; // G-1-5

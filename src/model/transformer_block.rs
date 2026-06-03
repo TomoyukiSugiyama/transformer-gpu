@@ -93,10 +93,10 @@ impl TransformerBlock {
         let d_add1_out_a = dy.to_vec();
 
         let ffn_backward = self.ffn.backward(&ctx, cfg, &d_ffn_out, &mut cache.ffn);
-        let (d_add1_out_b, d_gamma_2) = rms_norm_backward(
+        let (d_norm2_dx, d_gamma_2) = rms_norm_backward(
             &ctx,
             dy,
-            &ffn_backward.dx,
+            &cache.add1_out,
             &self.gamma_2,
             cfg.eps,
             cfg.d_model as u32,
@@ -104,30 +104,36 @@ impl TransformerBlock {
 
         let d_add1_out: Vec<f32> = d_add1_out_a
             .iter()
-            .zip(d_add1_out_b.iter())
-            .map(|(a, b)| a + b)
+            .zip(d_norm2_dx.iter())
+            .zip(ffn_backward.dx.iter())
+            .map(|((a, b), c)| a + b + c)
             .collect();
 
-        let d_attn_out = d_add1_out.clone();
-        let dx_a = d_add1_out;
+        // let d_attn_out = d_add1_out.clone();
+        // let dx_a = d_add1_out;
         let attn_backward = self.attn.backward(
             &ctx,
             cfg,
-            &d_attn_out,
+            &d_add1_out,
             cos_table,
             sin_table,
             &mut cache.attn,
         );
-        let (dx_b, d_gamma_1) = rms_norm_backward(
+        let (d_norm1_dx, d_gamma_1) = rms_norm_backward(
             &ctx,
-            dy,
-            &attn_backward.dx,
+            &d_add1_out,
+            &cache.x_in,
             &self.gamma_1,
             cfg.eps,
             cfg.d_model as u32,
         );
 
-        let dx = dx_a.iter().zip(dx_b.iter()).map(|(a, b)| a + b).collect();
+        let dx: Vec<f32> = d_add1_out
+            .iter()
+            .zip(d_norm1_dx.iter())
+            .zip(attn_backward.dx.iter())
+            .map(|((a, b), c)| a + b + c)
+            .collect();
 
         TransformerBlockBackward {
             dx,
@@ -175,24 +181,33 @@ impl TransformerBlock {
         let d_add1_out_a = dy.to_vec();
 
         let ffn_backward = self.ffn.backward_cpu(cfg, &d_ffn_out, &mut cache.ffn);
-        let (d_add1_out_b, d_gamma_2) =
-            rms_norm_backward_cpu(dy, &ffn_backward.dx, &self.gamma_2, cfg.eps, cfg.d_model);
+        let (d_norm2_dx, d_gamma_2) =
+            rms_norm_backward_cpu(dy, &cache.add1_out, &self.gamma_2, cfg.eps, cfg.d_model);
 
         let d_add1_out: Vec<f32> = d_add1_out_a
             .iter()
-            .zip(d_add1_out_b.iter())
-            .map(|(a, b)| a + b)
+            .zip(d_norm2_dx.iter())
+            .zip(ffn_backward.dx.iter())
+            .map(|((a, b), c)| a + b + c)
             .collect();
 
-        let d_attn_out = d_add1_out.clone();
-        let dx_a = d_add1_out;
         let attn_backward =
             self.attn
-                .backward_cpu(cfg, &d_attn_out, cos_table, sin_table, &mut cache.attn);
-        let (dx_b, d_gamma_1) =
-            rms_norm_backward_cpu(dy, &attn_backward.dx, &self.gamma_1, cfg.eps, cfg.d_model);
+                .backward_cpu(cfg, &d_add1_out, cos_table, sin_table, &mut cache.attn);
+        let (d_norm1_dx, d_gamma_1) = rms_norm_backward_cpu(
+            &d_add1_out,
+            &cache.x_in,
+            &self.gamma_1,
+            cfg.eps,
+            cfg.d_model,
+        );
 
-        let dx = dx_a.iter().zip(dx_b.iter()).map(|(a, b)| a + b).collect();
+        let dx: Vec<f32> = d_add1_out
+            .iter()
+            .zip(d_norm1_dx.iter())
+            .zip(attn_backward.dx.iter())
+            .map(|((a, b), c)| a + b + c)
+            .collect();
 
         TransformerBlockBackward {
             dx,
