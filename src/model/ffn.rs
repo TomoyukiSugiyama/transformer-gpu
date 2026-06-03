@@ -196,7 +196,7 @@ impl Ffn {
         // dx_from_up = d_up @ W_up^T
         // dW_up = x^T @ d_up
         let (dx_from_up, dw_up) =
-            matmul_backward_cpu(&d_up, &cache.x_in, &self.w_up, seq,  cfg.d_model,cfg.d_ff);
+            matmul_backward_cpu(&d_up, &cache.x_in, &self.w_up, seq, cfg.d_model, cfg.d_ff);
 
         // dx_from_gate = d_pre_gate @ W_gate^T
         // dW_gate = x^T @ d_pre_gate
