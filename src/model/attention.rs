@@ -12,9 +12,6 @@ use crate::{
 #[derive(Default)]
 pub struct AttentionForwardCache {
     pub x: Vec<f32>,             // (seq × d_model)
-    pub q: Vec<f32>,             // (seq × d_model)
-    pub k: Vec<f32>,             // (seq × d_model)
-    pub v: Vec<f32>,             // (seq × d_model)
     pub q_rope: Vec<Vec<f32>>,   // [n_heads] (seq × d_head)
     pub k_rope: Vec<Vec<f32>>,   // [n_heads] (seq × d_head)
     pub v_heads: Vec<Vec<f32>>,  // [n_heads] (seq × d_head)
@@ -66,7 +63,7 @@ impl Attention {
         let d_head = cfg.d_head();
 
         cache.x = x.to_vec();
-        cache.q = matmul_forward(
+        let q = matmul_forward(
             ctx,
             x,
             &self.w_q,
@@ -74,7 +71,7 @@ impl Attention {
             cfg.d_model as u32,
             cfg.d_model as u32,
         );
-        cache.k = matmul_forward(
+        let k = matmul_forward(
             ctx,
             x,
             &self.w_k,
@@ -82,7 +79,7 @@ impl Attention {
             cfg.d_model as u32,
             cfg.d_model as u32,
         );
-        cache.v = matmul_forward(
+        let v = matmul_forward(
             ctx,
             x,
             &self.w_v,
@@ -91,19 +88,19 @@ impl Attention {
             cfg.d_model as u32,
         );
         let q_heads = split_columns(
-            &cache.q,
+            &q,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
         let k_heads = split_columns(
-            &cache.k,
+            &k,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
         cache.v_heads = split_columns(
-            &cache.v,
+            &v,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
@@ -275,23 +272,23 @@ impl Attention {
         let d_head = cfg.d_head();
 
         cache.x = x.to_vec();
-        cache.q = matmul_forward_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model);
-        cache.k = matmul_forward_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model);
-        cache.v = matmul_forward_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model);
+        let q = matmul_forward_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model);
+        let k = matmul_forward_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model);
+        let v = matmul_forward_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model);
         let q_heads = split_columns(
-            &cache.q,
+            &q,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
         let k_heads = split_columns(
-            &cache.k,
+            &k,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
         );
         cache.v_heads = split_columns(
-            &cache.v,
+            &v,
             cfg.d_model as usize,
             d_head as usize,
             cfg.n_heads as usize,
