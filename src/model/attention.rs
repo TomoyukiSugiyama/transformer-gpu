@@ -1,12 +1,17 @@
 use crate::{
     gpu_context::GpuContext,
-    kernel::{attention::attention, matmul::matmul_forward, rope::rope},
+    kernel::{
+        attention::{attention, attention_backward},
+        matmul::{matmul_backward, matmul_forward},
+        rope::{rope, rope_backward},
+    },
     model_config::ModelConfig,
     util::{concat_columns_into, random_f32, split_columns},
 };
 
 #[derive(Default)]
 pub struct AttentionForwardCache {
+    pub x: Vec<f32>,             // (seq × d_model)
     pub q: Vec<f32>,             // (seq × d_model)
     pub k: Vec<f32>,             // (seq × d_model)
     pub v: Vec<f32>,             // (seq × d_model)
@@ -23,6 +28,14 @@ pub struct Attention {
     pub w_k: Vec<f32>,
     pub w_v: Vec<f32>,
     pub w_o: Vec<f32>,
+}
+
+pub struct AttentionBackward {
+    pub dx: Vec<f32>,
+    pub dw_q: Vec<f32>,
+    pub dw_k: Vec<f32>,
+    pub dw_v: Vec<f32>,
+    pub dw_o: Vec<f32>,
 }
 
 impl Attention {
@@ -52,6 +65,7 @@ impl Attention {
         let seq = x.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
+        cache.x = x.to_vec();
         cache.q = matmul_forward(
             ctx,
             x,
@@ -131,6 +145,115 @@ impl Attention {
         )
     }
 
+    pub fn backward(
+        &self,
+        ctx: &GpuContext,
+        cfg: &ModelConfig,
+        dy: &[f32],
+        cos_table: &[f32],
+        sin_table: &[f32],
+        cache: &mut AttentionForwardCache,
+    ) -> AttentionBackward {
+        let seq = dy.len() / cfg.d_model;
+        let d_head = cfg.d_head();
+
+        // dW_o = dy @ W_o^T
+        // dW = dW_o_in^T @ dy
+        let (dwo_in, dw_o) = matmul_backward(
+            ctx,
+            &dy,
+            &cache.wo_in,
+            &self.w_o,
+            seq as u32,
+            cfg.d_model as u32,
+            cfg.d_model as u32,
+        );
+
+        let d_atten_out = split_columns(
+            &dwo_in,
+            cfg.d_model as usize,
+            d_head as usize,
+            cfg.n_heads as usize,
+        );
+
+        let mut dq_rope = Vec::with_capacity(cfg.n_heads as usize);
+        let mut dk_rope = Vec::with_capacity(cfg.n_heads as usize);
+        let mut dv_heads = Vec::with_capacity(cfg.n_heads as usize);
+        for i in 0..cfg.n_heads {
+            let (dq, dk, dv) = attention_backward(
+                ctx,
+                &d_atten_out[i],
+                &cache.q_rope[i],
+                &cache.k_rope[i],
+                &cache.v_heads[i],
+                &cache.attn_out[i],
+                &cache.attn_l[i],
+                seq as u32,
+                d_head as u32,
+            );
+            dq_rope.push(dq);
+            dk_rope.push(dk);
+            dv_heads.push(dv);
+        }
+
+        let dq_heads: Vec<Vec<f32>> = dq_rope
+            .iter()
+            .map(|dq| rope_backward(ctx, dq, d_head as usize, &cos_table, &sin_table))
+            .collect();
+        let dk_heads: Vec<Vec<f32>> = dk_rope
+            .iter()
+            .map(|dk| rope_backward(ctx, dk, d_head as usize, &cos_table, &sin_table))
+            .collect();
+
+        let dq = concat_columns_into(&dq_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+        let (dx_q, dw_q) = matmul_backward(
+            ctx,
+            &dq,
+            &cache.x,
+            &self.w_q,
+            seq as u32,
+            cfg.d_model as u32,
+            cfg.d_model as u32,
+        );
+
+        let dk = concat_columns_into(&dk_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+        let (dx_k, dw_k) = matmul_backward(
+            ctx,
+            &dk,
+            &cache.x,
+            &self.w_k,
+            seq as u32,
+            cfg.d_model as u32,
+            cfg.d_model as u32,
+        );
+
+        let dv = concat_columns_into(&dv_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+        let (dx_v, dw_v) = matmul_backward(
+            ctx,
+            &dv,
+            &cache.x,
+            &self.w_v,
+            seq as u32,
+            cfg.d_model as u32,
+            cfg.d_model as u32,
+        );
+
+        let dx = dx_q
+            .iter()
+            .zip(dx_k.iter())
+            .zip(dx_v.iter())
+            .map(|((q_i, k_i), v_i)| q_i + k_i + v_i)
+            .collect();
+
+        AttentionBackward {
+            dx,
+            dw_q,
+            dw_k,
+            dw_v,
+            dw_o,
+        }
+    }
+
     // CPU リファレンス
     #[cfg(test)]
     pub fn forward_cpu(
@@ -151,6 +274,7 @@ impl Attention {
         let seq = x.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
+        cache.x = x.to_vec();
         cache.q = matmul_forward_cpu(x, &self.w_q, seq, cfg.d_model, cfg.d_model);
         cache.k = matmul_forward_cpu(x, &self.w_k, seq, cfg.d_model, cfg.d_model);
         cache.v = matmul_forward_cpu(x, &self.w_v, seq, cfg.d_model, cfg.d_model);
@@ -206,6 +330,90 @@ impl Attention {
 
         matmul_forward_cpu(&cache.wo_in, &self.w_o, seq, cfg.d_model, cfg.d_model)
     }
+
+    #[cfg(test)]
+    pub fn backward_cpu(
+        &self,
+        cfg: &ModelConfig,
+        dy: &[f32],
+        cos_table: &[f32],
+        sin_table: &[f32],
+        cache: &mut AttentionForwardCache,
+    ) -> AttentionBackward {
+        use crate::kernel::{matmul::matmul_backward_cpu, rope::rope_backward_cpu};
+
+        let seq = dy.len() / cfg.d_model;
+        let d_head = cfg.d_head();
+
+        // dW_o = dy @ W_o^T
+        // dW = dW_o_in^T @ dy
+        let (dwo_in, dw_o) =
+            matmul_backward_cpu(&dy, &cache.wo_in, &self.w_o, seq, cfg.d_model, cfg.d_model);
+
+        let d_atten_out = split_columns(
+            &dwo_in,
+            cfg.d_model as usize,
+            d_head as usize,
+            cfg.n_heads as usize,
+        );
+
+        let mut dq_rope = Vec::with_capacity(cfg.n_heads as usize);
+        let mut dk_rope = Vec::with_capacity(cfg.n_heads as usize);
+        let mut dv_heads = Vec::with_capacity(cfg.n_heads as usize);
+        for i in 0..cfg.n_heads {
+            use crate::kernel::attention::attention_backward_cpu;
+
+            let (dq, dk, dv) = attention_backward_cpu(
+                &d_atten_out[i],
+                &cache.q_rope[i],
+                &cache.k_rope[i],
+                &cache.v_heads[i],
+                &cache.attn_out[i],
+                &cache.attn_l[i],
+                seq,
+                d_head,
+            );
+            dq_rope.push(dq);
+            dk_rope.push(dk);
+            dv_heads.push(dv);
+        }
+
+        let dq_heads: Vec<Vec<f32>> = dq_rope
+            .iter()
+            .map(|dq| rope_backward_cpu(dq, d_head as usize, &cos_table, &sin_table))
+            .collect();
+        let dk_heads: Vec<Vec<f32>> = dk_rope
+            .iter()
+            .map(|dk| rope_backward_cpu(dk, d_head as usize, &cos_table, &sin_table))
+            .collect();
+
+        let dq = concat_columns_into(&dq_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+        let (dx_q, dw_q) =
+            matmul_backward_cpu(&dq, &cache.x, &self.w_q, seq, cfg.d_model, cfg.d_model);
+
+        let dk = concat_columns_into(&dk_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+        let (dx_k, dw_k) =
+            matmul_backward_cpu(&dk, &cache.x, &self.w_k, seq, cfg.d_model, cfg.d_model);
+
+        let dv = concat_columns_into(&dv_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+        let (dx_v, dw_v) =
+            matmul_backward_cpu(&dv, &cache.x, &self.w_v, seq, cfg.d_model, cfg.d_model);
+
+        let dx = dx_q
+            .iter()
+            .zip(dx_k.iter())
+            .zip(dx_v.iter())
+            .map(|((q_i, k_i), v_i)| q_i + k_i + v_i)
+            .collect();
+
+        AttentionBackward {
+            dx,
+            dw_q,
+            dw_k,
+            dw_v,
+            dw_o,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -236,5 +444,31 @@ mod test {
         let gpu = attn.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
 
         assert_close(&gpu, &cpu, 1e-3, 1e-4);
+    }
+
+    #[test]
+    fn test_multi_head_attention_backward() {
+        let ctx = GpuContext::new();
+        let cfg = ModelConfig {
+            ..Default::default()
+        };
+        let mut cache_cpu = AttentionForwardCache::default();
+        let mut cache = AttentionForwardCache::default();
+        let attn = Attention::new(&cfg);
+        let seq = 64usize;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
+        let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
+
+        let dy_cpu = attn.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
+        let dy_gpu = attn.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
+
+        let cpu = attn.backward_cpu(&cfg, &dy_cpu, &cos_table, &sin_table, &mut cache_cpu);
+        let gpu = attn.backward(&ctx, &cfg, &dy_gpu, &cos_table, &sin_table, &mut cache);
+
+        assert_close(&gpu.dx, &cpu.dx, 1e-2, 1e-3);
+        assert_close(&gpu.dw_q, &cpu.dw_q, 1e-2, 1e-3);
+        assert_close(&gpu.dw_k, &cpu.dw_k, 1e-2, 1e-3);
+        assert_close(&gpu.dw_v, &cpu.dw_v, 1e-2, 1e-3);
+        assert_close(&gpu.dw_o, &cpu.dw_o, 1e-2, 1e-3);
     }
 }
