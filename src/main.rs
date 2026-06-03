@@ -10,7 +10,6 @@ fn main() {
     };
     let mut model = LanguageModel::new(&cfg);
     let mut trainer = Trainer::new(TrainConfig {
-        lr: 1e-5,
         ..Default::default()
     });
 
