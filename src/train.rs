@@ -1,4 +1,7 @@
+use std::{io::Write, time::Instant};
+
 use crate::{
+    dataset::{Dataset, Split},
     gpu_context::GpuContext,
     kernel::{adam_w::AdamW, cross_entropy_loss::cross_entropy_loss},
     model::language_model::{LanguageModel, LanguageModelForwardCache},
@@ -185,25 +188,44 @@ impl Trainer {
         ctx: &GpuContext,
         model: &mut LanguageModel,
         cfg: &ModelConfig,
-        token_ids: &[u32],
+        // token_ids: &[u32],
+        dataset: &Dataset,
     ) {
-        let n_val = (token_ids.len() as f32 * self.tcfg.val_split) as usize;
-        let (val_ids, train_ids) = token_ids.split_at(n_val);
-
-        let seq = self.tcfg.seq_len;
-        let max_off = train_ids.len().saturating_sub(seq + 1);
         let mut rng = StdRng::seed_from_u64(self.tcfg.seed);
         let mut cache = LanguageModelForwardCache::new(cfg.n_layers);
-        println!("seq_len={} max_off={}", seq, max_off);
-        println!("train={} val={} tokens", train_ids.len(), val_ids.len());
+        println!(
+            "# d_model={}, n_heads={}, n_kv_heads={}, d_ff={}, n_layers={}, max_seq_len={}, vocab_size={}, dropout={}",
+            cfg.d_model,
+            cfg.n_heads,
+            cfg.n_kv_heads,
+            cfg.d_ff,
+            cfg.n_layers,
+            cfg.max_seq_len,
+            cfg.vocab_size,
+            cfg.dropout_p,
+        );
+        println!(
+            "# train_tokens={} val_tokens={}",
+            dataset.train.len(),
+            dataset.val.len()
+        );
+
+        println!("step,loss,ms_per_step,elapsed_s");
+        let train_start = Instant::now();
+        let mut window_start = Instant::now();
 
         for step in 1..=self.tcfg.max_steps {
-            let offset = rng.random_range(0..=max_off);
-            let window = &train_ids[offset..offset + seq + 1];
-            let loss = self.train_step(ctx, model, cfg, &mut cache, window);
+            let window = dataset.sample_window(Split::Train, self.tcfg.seq_len, &mut rng);
+            let loss = self.train_step(ctx, model, cfg, &mut cache, &window);
 
             if step % self.tcfg.log_interval == 0 {
-                println!("step {step:>5}  train_loss={loss:.4}");
+                let window_elapsed = window_start.elapsed();
+                let ms_per_step =
+                    window_elapsed.as_secs_f64() * 1000.0 / self.tcfg.log_interval as f64;
+                let elapsed_s = train_start.elapsed().as_secs_f64();
+                println!("{step},{loss:.4},{ms_per_step:.1},{elapsed_s:.1}");
+                let _ = std::io::stdout().flush();
+                window_start = Instant::now();
             }
             if step % self.tcfg.eval_interval == 0 {
                 let vl = self.compute_val_loss(
@@ -211,10 +233,10 @@ impl Trainer {
                     model,
                     cfg,
                     &mut cache,
-                    val_ids,
+                    &dataset.val,
                     self.tcfg.seed + step as u64,
                 );
-                println!("step {step:>5}  val_loss={vl:.4}  ppl={:.2}", vl.exp());
+                println!("# step {step:>5}  val_loss={vl:.4}  ppl={:.2}", vl.exp());
             }
         }
     }

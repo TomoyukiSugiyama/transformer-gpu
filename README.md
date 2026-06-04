@@ -25,6 +25,7 @@ Rust で書かれた Transformer (decoder-only) 言語モデルの学習・推�
 
 ```
 src/
+|-- dataset.rs
 |-- gpu_context.rs
 |-- kernel/     # Rust: wgpu のバッファ・パイプライン管理
 |   |-- adam_w.rs
@@ -62,6 +63,7 @@ src/
 |   |-- swiglu_elementwise_backward.wgsl
 |   `-- swiglu_elementwise.wgsl
 |-- test_utils.rs
+|-- train.rs
 `-- util.rs
 benches/        # ベンチマーク
 |-- kernels.rs
