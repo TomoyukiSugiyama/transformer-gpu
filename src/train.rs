@@ -1,6 +1,7 @@
 use std::{io::Write, time::Instant};
 
 use crate::{
+    checkpoint::Checkpointable,
     dataset::{Dataset, Split},
     gpu_context::GpuContext,
     kernel::{adam_w::AdamW, cross_entropy_loss::cross_entropy_loss},
@@ -210,6 +211,7 @@ impl Trainer {
             dataset.val.len()
         );
 
+        let mut best_val = f32::INFINITY;
         println!("step,loss,ms_per_step,elapsed_s");
         let train_start = Instant::now();
         let mut window_start = Instant::now();
@@ -236,7 +238,15 @@ impl Trainer {
                     &dataset.val,
                     self.tcfg.seed + step as u64,
                 );
-                println!("# step {step:>5}  val_loss={vl:.4}  ppl={:.2}", vl.exp());
+                println!("# step {step} val_loss={vl:.4} ppl={:.2}", vl.exp());
+                if vl < best_val {
+                    best_val = vl;
+                    let mut map = model.to_weight_map();
+                    map.insert_scalar("meta.step", step as u64);
+                    map.merge("optimizer", self.opt.to_weight_map());
+                    map.save("checkpoints/best.ckpt").unwrap();
+                    println!("#  → checkpoint saved (val_loss={vl:.4})");
+                }
             }
         }
     }

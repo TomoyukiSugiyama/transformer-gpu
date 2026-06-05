@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::checkpoint::{Checkpointable, WeightMap};
+
 pub struct AdamWParam {
     data: Vec<f32>, // パラメータ本体(W1, W2, b など)
     m: Vec<f32>,    // 一次モーメント
@@ -121,6 +123,59 @@ impl AdamW {
         );
 
         param.copy_from_slice(&entry.data);
+    }
+}
+
+impl Checkpointable for AdamW {
+    fn to_weight_map(&self) -> WeightMap {
+        let mut map = WeightMap::new();
+        map.insert_scalar("step", self.step_count as u64);
+        for (k, param) in &self.params {
+            map.insert_vector(&format!("m.{k}"), param.m.clone());
+            map.insert_vector(&format!("v.{k}"), param.v.clone());
+            map.insert_vector(&format!("data.{k}"), param.data.clone());
+        }
+        map
+    }
+
+    fn from_weight_map(&mut self, map: &WeightMap) -> std::io::Result<()> {
+        self.step_count = map.get_scalar("step")? as usize;
+        for key in map.vector_keys() {
+            if let Some(k) = key.strip_prefix("data.") {
+                let data = map.get_vector(key)?.clone();
+                let n = data.len();
+                let entry = self
+                    .params
+                    .entry(k.to_string())
+                    .or_insert_with(|| AdamWParam {
+                        data: vec![0.0; n],
+                        m: vec![0.0; n],
+                        v: vec![0.0; n],
+                    });
+                entry.data = data;
+            } else if let Some(k) = key.strip_prefix("m.") {
+                let entry = self
+                    .params
+                    .entry(k.to_string())
+                    .or_insert_with(|| AdamWParam {
+                        data: vec![],
+                        m: vec![],
+                        v: vec![],
+                    });
+                entry.m = map.get_vector(key)?.clone();
+            } else if let Some(k) = key.strip_prefix("v.") {
+                let entry = self
+                    .params
+                    .entry(k.to_string())
+                    .or_insert_with(|| AdamWParam {
+                        data: vec![],
+                        m: vec![],
+                        v: vec![],
+                    });
+                entry.v = map.get_vector(key)?.clone();
+            }
+        }
+        Ok(())
     }
 }
 

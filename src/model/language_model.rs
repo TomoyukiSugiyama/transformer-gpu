@@ -1,4 +1,5 @@
 use crate::{
+    checkpoint::{Checkpointable, WeightMap},
     gpu_context::GpuContext,
     kernel::{
         embedding::{embedding, embedding_backward},
@@ -245,6 +246,45 @@ impl LanguageModel {
             d_final_gamma,
             d_lm_head,
         }
+    }
+}
+
+impl Checkpointable for LanguageModel {
+    fn to_weight_map(&self) -> WeightMap {
+        let mut map = WeightMap::new();
+        map.insert_vector("embedding", self.embedding.clone());
+        map.insert_vector("final_gamma", self.final_gamma.clone());
+        map.insert_vector("lm_head", self.lm_head.clone());
+        for (i, block) in self.blocks.iter().enumerate() {
+            map.insert_vector(&format!("block.{i}.gamma_1"), block.gamma_1.clone());
+            map.insert_vector(&format!("block.{i}.gamma_2"), block.gamma_2.clone());
+            map.insert_vector(&format!("block.{i}.wq"), block.attn.w_q.clone());
+            map.insert_vector(&format!("block.{i}.wk"), block.attn.w_k.clone());
+            map.insert_vector(&format!("block.{i}.wv"), block.attn.w_v.clone());
+            map.insert_vector(&format!("block.{i}.wo"), block.attn.w_o.clone());
+            map.insert_vector(&format!("block.{i}.w_gate"), block.ffn.w_gate.clone());
+            map.insert_vector(&format!("block.{i}.w_up"), block.ffn.w_up.clone());
+            map.insert_vector(&format!("block.{i}.w_down"), block.ffn.w_down.clone());
+        }
+        map
+    }
+
+    fn from_weight_map(&mut self, map: &WeightMap) -> std::io::Result<()> {
+        self.embedding = map.get_vector("embedding")?.clone();
+        self.final_gamma = map.get_vector("final_gamma")?.clone();
+        self.lm_head = map.get_vector("lm_head")?.clone();
+        for (i, block) in self.blocks.iter_mut().enumerate() {
+            block.gamma_1 = map.get_vector(&format!("block.{i}.gamma_1"))?.clone();
+            block.gamma_2 = map.get_vector(&format!("block.{i}.gamma_2"))?.clone();
+            block.attn.w_q = map.get_vector(&format!("block.{i}.wq"))?.clone();
+            block.attn.w_k = map.get_vector(&format!("block.{i}.wk"))?.clone();
+            block.attn.w_v = map.get_vector(&format!("block.{i}.wv"))?.clone();
+            block.attn.w_o = map.get_vector(&format!("block.{i}.wo"))?.clone();
+            block.ffn.w_gate = map.get_vector(&format!("block.{i}.w_gate"))?.clone();
+            block.ffn.w_up = map.get_vector(&format!("block.{i}.w_up"))?.clone();
+            block.ffn.w_down = map.get_vector(&format!("block.{i}.w_down"))?.clone();
+        }
+        Ok(())
     }
 }
 

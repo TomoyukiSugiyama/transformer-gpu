@@ -1,3 +1,4 @@
+pub mod checkpoint;
 pub mod dataset;
 pub mod gpu_context;
 pub mod kernel;

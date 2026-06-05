@@ -25,6 +25,7 @@ Rust で書かれた Transformer (decoder-only) 言語モデルの学習・推�
 
 ```
 src/
+|-- checkpoint.rs
 |-- dataset.rs
 |-- gpu_context.rs
 |-- kernel/     # Rust: wgpu のバッファ・パイプライン管理

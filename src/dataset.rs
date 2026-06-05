@@ -28,16 +28,16 @@ impl Dataset {
     }
 
     /// ランダムウィンドウを1つ取り出す（train_step に渡す用）
-    pub fn sample_window(&self, split: Split, seq_len: usize, rng: &mut StdRng) -> Vec<u32>{
+    pub fn sample_window(&self, split: Split, seq_len: usize, rng: &mut StdRng) -> Vec<u32> {
         let data = match split {
             Split::Train => &self.train,
-            Split::Val   => &self.val,
+            Split::Val => &self.val,
         };
-        
+
         // offset の最大値 = data.len() - (seq_len + 1)
         let max_off = data.len() - seq_len - 1;
         let offset = rng.random_range(0..=max_off);
-        
+
         data[offset..offset + seq_len + 1].to_vec()
     }
 }
