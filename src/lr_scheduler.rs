@@ -14,7 +14,9 @@ pub enum LrScheduleKind {
     WarmupCosine,
     /// stable_steps: warmup 完了後、 decay 開始までの「lr_max 一定」 区間長。
     /// stable_steps=0 にすると warmup → decay (cosine 不使用) という挙動になる。
-    WarmupStableDecay { stable_steps: usize },
+    WarmupStableDecay {
+        stable_steps: usize,
+    },
 }
 
 pub struct LrScheduler {

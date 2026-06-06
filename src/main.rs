@@ -14,16 +14,17 @@ fn main() {
         ..Default::default()
     });
 
-    let dataset = Dataset::from_file("corpus/tiny_shakespeare.txt", 0.2).unwrap();
+    let dataset =
+        Dataset::from_file("corpus/tiny_shakespeare.txt", trainer.tcfg.val_split).unwrap();
 
-    // trainer.run(&ctx, &mut model, &mut cfg, &dataset, None);
+    trainer.run(&ctx, &mut model, &mut cfg, &dataset, None);
 
     // resume from best.ckpt
-    trainer.run(
-        &ctx,
-        &mut model,
-        &mut cfg,
-        &dataset,
-        Some("checkpoints/best.ckpt"),
-    );
+    // trainer.run(
+    //     &ctx,
+    //     &mut model,
+    //     &mut cfg,
+    //     &dataset,
+    //     Some("checkpoints/best.ckpt"),
+    // );
 }

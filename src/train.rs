@@ -40,7 +40,7 @@ impl Default for TrainConfig {
             warmup_steps: 200,
             end_step: 5000,
             wd: 0.01,
-            val_split: 0.1,
+            val_split: 0.2,
             seed: 42,
             grad_clip: 1.0,
             lr_schedule_kind: LrScheduleKind::WarmupStableDecay { stable_steps: 3800 },
@@ -202,14 +202,15 @@ impl Trainer {
         resume_ckpt: Option<&str>,
     ) {
         let mut rng = StdRng::seed_from_u64(self.tcfg.seed);
-        let mut start_step = 0usize;
+        let mut ema_loss: Option<f32> = None;
+        let mut start_step = 1usize;
         let mut best_val = f32::INFINITY;
         if let Some(path) = resume_ckpt {
             let map = WeightMap::load(path).unwrap();
             cfg.from_weight_map(&map.scoped("meta.model")).unwrap();
             model.from_weight_map(&map).unwrap();
             self.opt.from_weight_map(&map.scoped("optimizer")).unwrap();
-            start_step = map.get_scalar("meta.step").unwrap_or(0) as usize;
+            start_step = map.get_scalar("meta.step").unwrap_or(1) as usize;
             best_val = map
                 .get_scalar("meta.best_val")
                 .map(|v| f32::from_bits(v as u32))
@@ -218,7 +219,7 @@ impl Trainer {
             // Consume RNG to synchronize
             let max_offset_train = dataset.train.len() - self.tcfg.seq_len - 1;
             let max_offset_val = dataset.val.len() - self.tcfg.seq_len - 1;
-            for step in 1..=start_step {
+            for step in 1..start_step {
                 let _ = rng.random_range(0..=max_offset_train);
                 if step % self.tcfg.eval_interval == 0 {
                     let _ = rng.random_range(0..=max_offset_val);
@@ -254,30 +255,43 @@ impl Trainer {
             self.tcfg.warmup_steps,
             self.tcfg.end_step,
             self.tcfg.lr_schedule_kind,
-            start_step + 1,
+            start_step,
             best_val
         );
         println!(
-            "# train_tokens={}, val_tokens={}",
+            "# train_tokens={}, val_tokens={}, var_chars={}",
             dataset.train.len(),
             dataset.val.len(),
+            dataset.val_chars
         );
 
-        println!("step,loss,lr,ms_per_step,elapsed_s");
+        println!("step,loss,ema,ppl,ema_ppl,lr,ms_per_step,elapsed_s");
         let train_start = Instant::now();
         let mut window_start = Instant::now();
 
-        for step in start_step + 1..=self.tcfg.end_step {
+        for step in start_step..=self.tcfg.end_step {
             let window = dataset.sample_window(Split::Train, self.tcfg.seq_len, &mut rng);
             let lr = lr_scheduler.get_lr(step);
             let loss = self.train_step(ctx, model, cfg, &mut cache, &window, lr);
+
+            // ema_loss = alpha * ema_loss + (1 - alpha) * loss
+            let alpha = 0.05;
+            ema_loss = Some(match ema_loss {
+                Some(e) => e * (1.0 - alpha) + loss * alpha,
+                None => loss,
+            });
 
             if step % self.tcfg.log_interval == 0 {
                 let window_elapsed = window_start.elapsed();
                 let ms_per_step =
                     window_elapsed.as_secs_f64() * 1000.0 / self.tcfg.log_interval as f64;
                 let elapsed_s = train_start.elapsed().as_secs_f64();
-                println!("{step},{loss:.4},{lr:.3e},{ms_per_step:.1},{elapsed_s:.1}");
+                let ema = ema_loss.unwrap();
+                println!(
+                    "{step},{loss:.4},{ema:.4},{:.4},{:.4},{lr:.3e},{ms_per_step:.1},{elapsed_s:.1}",
+                    loss.exp(),
+                    ema.exp()
+                );
                 let _ = std::io::stdout().flush();
                 window_start = Instant::now();
             }
@@ -290,7 +304,17 @@ impl Trainer {
                     &dataset.val,
                     self.tcfg.seed + step as u64,
                 );
-                println!("# step {step} val_loss={vl:.4} ppl={:.2}", vl.exp());
+                let bpc = if dataset.val_chars > 0 && !dataset.val.is_empty() {
+                    vl / std::f32::consts::LN_2
+                        * (dataset.val.len() as f32 / dataset.val_chars as f32)
+                } else {
+                    f32::NAN
+                };
+                println!(
+                    "# val step={step} val_loss={vl:.4} val_ppl={:.4} bpc={:.4}",
+                    vl.exp(),
+                    bpc
+                );
                 if vl < best_val {
                     best_val = vl;
                     let mut map = model.to_weight_map();
