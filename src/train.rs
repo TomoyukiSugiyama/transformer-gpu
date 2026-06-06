@@ -259,7 +259,7 @@ impl Trainer {
             best_val
         );
         println!(
-            "# train_tokens={}, val_tokens={}, var_chars={}",
+            "# train_tokens={}, val_tokens={}, val_chars={}",
             dataset.train.len(),
             dataset.val.len(),
             dataset.val_chars

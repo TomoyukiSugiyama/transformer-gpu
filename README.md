@@ -40,6 +40,7 @@ src/
 |   |-- rope.rs
 |   `-- swiglu_elementwise.rs
 |-- lib.rs
+|-- lr_scheduler.rs
 |-- main.rs
 |-- model/      # Transformer のブロック構成（kernel を組み合わせる）
 |   |-- attention.rs

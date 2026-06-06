@@ -31,7 +31,7 @@ RMSNorm、SwiGLU FFN、Residual Add、RoPE を GPU 化。TransformerBlock 単体
 
 -> [G-1-4](g1-4.md)
 
-### G-1-5 学習ループ
+### G-1-5 学習ループ ✅ 完了
 backward カーネル実装、AdamW の GPU 化、loss 計算。CPU 版より複雑なので最も工数がかかるフェーズ。
 
 -> [G-1-5](g1-5.md)
