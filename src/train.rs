@@ -5,6 +5,7 @@ use crate::{
     dataset::{Dataset, Split},
     gpu_context::GpuContext,
     kernel::{adam_w::AdamW, cross_entropy_loss::cross_entropy_loss},
+    lr_scheduler::{LrScheduleKind, LrScheduler},
     model::language_model::{LanguageModel, LanguageModelForwardCache},
     model_config::ModelConfig,
 };
@@ -12,12 +13,15 @@ use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
 pub struct TrainConfig {
-    pub max_steps: usize,
     pub eval_interval: usize,
     pub eval_batches: usize,
     pub seq_len: usize,
     pub log_interval: usize,
-    pub lr: f32,
+    pub lr_max: f32,
+    pub lr_min: f32,
+    pub warmup_steps: usize,
+    pub end_step: usize,
+    pub lr_schedule_kind: LrScheduleKind,
     pub wd: f32,
     pub val_split: f32,
     pub seed: u64,
@@ -27,16 +31,19 @@ pub struct TrainConfig {
 impl Default for TrainConfig {
     fn default() -> Self {
         Self {
-            max_steps: 5000,
             eval_interval: 500,
             eval_batches: 20,
             seq_len: 128,
             log_interval: 100,
-            lr: 1e-3,
+            lr_max: 1e-3,
+            lr_min: 1e-4,
+            warmup_steps: 200,
+            end_step: 5000,
             wd: 0.01,
             val_split: 0.1,
             seed: 42,
             grad_clip: 1.0,
+            lr_schedule_kind: LrScheduleKind::WarmupStableDecay { stable_steps: 3800 },
         }
     }
 }
@@ -48,7 +55,7 @@ pub struct Trainer {
 
 impl Trainer {
     pub fn new(tcfg: TrainConfig) -> Self {
-        let opt = AdamW::new_with_wd(tcfg.lr, tcfg.wd);
+        let opt = AdamW::new_with_wd(tcfg.lr_min, tcfg.wd);
         Self { opt, tcfg }
     }
 
@@ -59,6 +66,7 @@ impl Trainer {
         cfg: &ModelConfig,
         cache: &mut LanguageModelForwardCache,
         input_ids: &[u32],
+        lr: f32,
     ) -> f32 {
         let seq = input_ids.len() - 1;
         let input = &input_ids[..seq];
@@ -98,6 +106,7 @@ impl Trainer {
         };
 
         // --- AdamW step ---
+        self.opt.set_lr(lr);
         self.opt.increment_step();
 
         let g = |v: &[f32]| -> Vec<f32> { v.iter().map(|&x| x * clip).collect() };
@@ -218,6 +227,14 @@ impl Trainer {
             println!("# resume from checkpoint: {}", path);
         }
 
+        let lr_scheduler = LrScheduler::with_kind(
+            self.tcfg.lr_max,
+            self.tcfg.lr_min,
+            self.tcfg.warmup_steps,
+            self.tcfg.end_step,
+            self.tcfg.lr_schedule_kind,
+        );
+
         let mut cache = LanguageModelForwardCache::new(cfg.n_layers);
         println!(
             "# d_model={}, n_heads={}, n_kv_heads={}, d_ff={}, n_layers={}, max_seq_len={}, vocab_size={}, dropout={}",
@@ -231,27 +248,36 @@ impl Trainer {
             cfg.dropout_p,
         );
         println!(
-            "# train_tokens={}, val_tokens={}, start_step={}, best_val={}",
-            dataset.train.len(),
-            dataset.val.len(),
+            "# lr_max={}, lr_min={}, warmup_steps={}, end_step={}, lr_schedule={:?}, start_step={}, best_val={}",
+            self.tcfg.lr_max,
+            self.tcfg.lr_min,
+            self.tcfg.warmup_steps,
+            self.tcfg.end_step,
+            self.tcfg.lr_schedule_kind,
             start_step + 1,
             best_val
         );
+        println!(
+            "# train_tokens={}, val_tokens={}",
+            dataset.train.len(),
+            dataset.val.len(),
+        );
 
-        println!("step,loss,ms_per_step,elapsed_s");
+        println!("step,loss,lr,ms_per_step,elapsed_s");
         let train_start = Instant::now();
         let mut window_start = Instant::now();
 
-        for step in start_step + 1..=self.tcfg.max_steps {
+        for step in start_step + 1..=self.tcfg.end_step {
             let window = dataset.sample_window(Split::Train, self.tcfg.seq_len, &mut rng);
-            let loss = self.train_step(ctx, model, cfg, &mut cache, &window);
+            let lr = lr_scheduler.get_lr(step);
+            let loss = self.train_step(ctx, model, cfg, &mut cache, &window, lr);
 
             if step % self.tcfg.log_interval == 0 {
                 let window_elapsed = window_start.elapsed();
                 let ms_per_step =
                     window_elapsed.as_secs_f64() * 1000.0 / self.tcfg.log_interval as f64;
                 let elapsed_s = train_start.elapsed().as_secs_f64();
-                println!("{step},{loss:.4},{ms_per_step:.1},{elapsed_s:.1}");
+                println!("{step},{loss:.4},{lr:.3e},{ms_per_step:.1},{elapsed_s:.1}");
                 let _ = std::io::stdout().flush();
                 window_start = Instant::now();
             }
@@ -301,21 +327,52 @@ mod tests {
         let mut model = LanguageModel::new(&cfg);
         let mut cache = LanguageModelForwardCache::new(cfg.n_layers);
         let mut trainer = Trainer::new(TrainConfig {
-            max_steps: 20,
+            warmup_steps: 5,
+            end_step: 20,
             seq_len: 7,
-            lr: 1e-2,
+            lr_min: 1e-2,
+            lr_max: 5e-2,
+            lr_schedule_kind: LrScheduleKind::WarmupStableDecay { stable_steps: 10 },
             log_interval: 5,
             eval_interval: 999,
             ..Default::default()
         });
+        let lr_scheduler = LrScheduler::with_kind(
+            trainer.tcfg.lr_max,
+            trainer.tcfg.lr_min,
+            trainer.tcfg.warmup_steps,
+            trainer.tcfg.end_step,
+            trainer.tcfg.lr_schedule_kind,
+        );
 
         let input: Vec<u32> = (0u32..8).map(|i| i % 10).collect();
 
-        let loss_before = trainer.train_step(&ctx, &mut model, &cfg, &mut cache, &input);
-        for _ in 0..19 {
-            trainer.train_step(&ctx, &mut model, &cfg, &mut cache, &input);
+        let loss_before = trainer.train_step(
+            &ctx,
+            &mut model,
+            &cfg,
+            &mut cache,
+            &input,
+            lr_scheduler.get_lr(0),
+        );
+        for step in 2..20 {
+            trainer.train_step(
+                &ctx,
+                &mut model,
+                &cfg,
+                &mut cache,
+                &input,
+                lr_scheduler.get_lr(step),
+            );
         }
-        let loss_after = trainer.train_step(&ctx, &mut model, &cfg, &mut cache, &input);
+        let loss_after = trainer.train_step(
+            &ctx,
+            &mut model,
+            &cfg,
+            &mut cache,
+            &input,
+            lr_scheduler.get_lr(20),
+        );
 
         assert!(
             loss_after < loss_before,
