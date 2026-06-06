@@ -967,9 +967,10 @@ mod test {
     fn test_attention_random() {
         let seq: usize = 1024;
         let d_head: usize = 64;
-        let q: Vec<f32> = random_f32(seq * d_head, 32);
-        let k: Vec<f32> = random_f32(seq * d_head, 33);
-        let v: Vec<f32> = random_f32(seq * d_head, 34);
+        let scale = 0.1f32;
+        let q: Vec<f32> = random_f32(seq * d_head, 32, scale);
+        let k: Vec<f32> = random_f32(seq * d_head, 33, scale);
+        let v: Vec<f32> = random_f32(seq * d_head, 34, scale);
         let (cpu_o, cpu_l) = attention_cpu(&q, &k, &v, seq, d_head);
         let ctx = GpuContext::new();
         let (gpu_o, gpu_l) = attention(&ctx, &q, &k, &v, seq as u32, d_head as u32);
@@ -983,12 +984,13 @@ mod test {
     fn test_attention_backward_random() {
         let seq: usize = 1024;
         let d_head: usize = 64;
-        let do_: Vec<f32> = random_f32(seq * d_head, 32);
-        let q: Vec<f32> = random_f32(seq * d_head, 33);
-        let k: Vec<f32> = random_f32(seq * d_head, 34);
-        let v: Vec<f32> = random_f32(seq * d_head, 35);
-        let o: Vec<f32> = random_f32(seq * d_head, 36);
-        let l: Vec<f32> = random_f32(seq, 37);
+        let scale = 0.1f32;
+        let do_: Vec<f32> = random_f32(seq * d_head, 32, scale);
+        let q: Vec<f32> = random_f32(seq * d_head, 33, scale);
+        let k: Vec<f32> = random_f32(seq * d_head, 34, scale);
+        let v: Vec<f32> = random_f32(seq * d_head, 35, scale);
+        let o: Vec<f32> = random_f32(seq * d_head, 36, scale);
+        let l: Vec<f32> = random_f32(seq, 37, scale);
         let (cpu_dq, cpu_dk, cpu_dv) =
             attention_backward_cpu(&do_, &q, &k, &v, &o, &l, seq, d_head);
         let ctx = GpuContext::new();
@@ -1003,9 +1005,10 @@ mod test {
     fn test_attention_non_power_of_two() {
         let seq: usize = 7;
         let d_head: usize = 65;
-        let q: Vec<f32> = random_f32(seq * d_head, 42);
-        let k: Vec<f32> = random_f32(seq * d_head, 43);
-        let v: Vec<f32> = random_f32(seq * d_head, 44);
+        let scale = 0.1f32;
+        let q: Vec<f32> = random_f32(seq * d_head, 42, scale);
+        let k: Vec<f32> = random_f32(seq * d_head, 43, scale);
+        let v: Vec<f32> = random_f32(seq * d_head, 44, scale);
         let (cpu_o, cpu_l) = attention_cpu(&q, &k, &v, seq, d_head);
         let ctx = GpuContext::new();
         let (gpu_o, gpu_l) = attention(&ctx, &q, &k, &v, seq as u32, d_head as u32);

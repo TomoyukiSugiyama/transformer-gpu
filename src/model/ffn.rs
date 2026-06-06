@@ -32,10 +32,11 @@ pub struct FfnBackward {
 
 impl Ffn {
     pub fn new(cfg: &ModelConfig) -> Self {
+        let scale = (1.0 / cfg.d_model as f32).sqrt();
         Self {
-            w_gate: random_f32(cfg.d_model * cfg.d_ff, 36),
-            w_up: random_f32(cfg.d_model * cfg.d_ff, 37),
-            w_down: random_f32(cfg.d_ff * cfg.d_model, 38),
+            w_gate: random_f32(cfg.d_model * cfg.d_ff, 36, scale),
+            w_up: random_f32(cfg.d_model * cfg.d_ff, 37, scale),
+            w_down: random_f32(cfg.d_ff * cfg.d_model, 38, scale),
         }
     }
 
@@ -311,10 +312,11 @@ mod test {
             ..Default::default()
         };
         let seq: usize = 4;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 42);
-        let w_gate: Vec<f32> = random_f32(cfg.d_model * cfg.d_ff, 43);
-        let w_up: Vec<f32> = random_f32(cfg.d_model * cfg.d_ff, 44);
-        let w_down: Vec<f32> = random_f32(cfg.d_ff * cfg.d_model, 45);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 42, scale);
+        let w_gate: Vec<f32> = random_f32(cfg.d_model * cfg.d_ff, 43, scale);
+        let w_up: Vec<f32> = random_f32(cfg.d_model * cfg.d_ff, 44, scale);
+        let w_down: Vec<f32> = random_f32(cfg.d_ff * cfg.d_model, 45, scale);
         let ffn = Ffn {
             w_gate,
             w_up,
@@ -337,10 +339,11 @@ mod test {
             ..Default::default()
         };
         let seq: usize = 4;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 42);
-        let w_gate: Vec<f32> = random_f32(cfg.d_model * cfg.d_ff, 43);
-        let w_up: Vec<f32> = random_f32(cfg.d_model * cfg.d_ff, 44);
-        let w_down: Vec<f32> = random_f32(cfg.d_ff * cfg.d_model, 45);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 42, scale);
+        let w_gate: Vec<f32> = random_f32(cfg.d_model * cfg.d_ff, 43, scale);
+        let w_up: Vec<f32> = random_f32(cfg.d_model * cfg.d_ff, 44, scale);
+        let w_down: Vec<f32> = random_f32(cfg.d_ff * cfg.d_model, 45, scale);
         let ffn = Ffn {
             w_gate,
             w_up,

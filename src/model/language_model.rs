@@ -52,13 +52,14 @@ pub struct LanguageModelBackward {
 
 impl LanguageModel {
     pub fn new(cfg: &ModelConfig) -> Self {
+        let scale = (1.0 / cfg.d_model as f32).sqrt();
         Self {
-            embedding: random_f32(cfg.vocab_size * cfg.d_model, 10),
+            embedding: random_f32(cfg.vocab_size * cfg.d_model, 10, scale),
             blocks: (0..cfg.n_layers)
                 .map(|_| TransformerBlock::new(cfg))
                 .collect(),
-            final_gamma: random_f32(cfg.d_model, 11),
-            lm_head: random_f32(cfg.d_model * cfg.vocab_size, 12),
+            final_gamma: random_f32(cfg.d_model, 11, scale),
+            lm_head: random_f32(cfg.d_model * cfg.vocab_size, 12, scale),
         }
     }
 

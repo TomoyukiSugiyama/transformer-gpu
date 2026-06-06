@@ -41,11 +41,12 @@ pub struct TransformerBlockBackward {
 
 impl TransformerBlock {
     pub fn new(cfg: &ModelConfig) -> Self {
+        let scale = (1.0 / cfg.d_model as f32).sqrt();
         Self {
             attn: Attention::new(&cfg),
             ffn: Ffn::new(cfg),
-            gamma_1: random_f32(cfg.d_model, 38),
-            gamma_2: random_f32(cfg.d_model, 39),
+            gamma_1: random_f32(cfg.d_model, 38, scale),
+            gamma_2: random_f32(cfg.d_model, 39, scale),
         }
     }
 
@@ -239,7 +240,8 @@ mod test {
         let mut cache_cpu = TransformerBlockForwardCache::default();
         let mut cache = TransformerBlockForwardCache::default();
         let seq = 64usize;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31, scale);
 
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, base);
@@ -260,7 +262,8 @@ mod test {
         let mut cache_cpu = TransformerBlockForwardCache::default();
         let mut cache = TransformerBlockForwardCache::default();
         let seq = 64usize;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31, scale);
 
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, base);
@@ -306,7 +309,8 @@ mod test {
         let mut cache = TransformerBlockForwardCache::default();
 
         let seq = 1usize;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31, scale);
 
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, base);
@@ -329,7 +333,8 @@ mod test {
         let mut cache = TransformerBlockForwardCache::default();
 
         let seq = 64usize;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31, scale);
 
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, base);
@@ -353,7 +358,8 @@ mod test {
         let mut cache = TransformerBlockForwardCache::default();
 
         let seq = 64usize;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31, scale);
 
         let base: f32 = 10000.0;
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, base);

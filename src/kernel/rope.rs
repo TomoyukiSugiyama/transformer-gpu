@@ -555,7 +555,8 @@ mod test {
         let d_head = 64;
         let max_len = 128;
         let base: f32 = 10000.0;
-        let x: Vec<f32> = random_f32(seq * d_head, 33);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * d_head, 33, scale);
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
         let cpu = rope_cpu(&x, d_head, &cos_table, &sin_table);
         let ctx = GpuContext::new();
@@ -570,7 +571,8 @@ mod test {
         let d_head = 64;
         let max_len = 128;
         let base: f32 = 10000.0;
-        let dy: Vec<f32> = random_f32(seq * d_head, 33);
+        let scale = 0.1f32;
+        let dy: Vec<f32> = random_f32(seq * d_head, 33, scale);
         let (cos_table, sin_table) = create_table(d_head, max_len, base);
         let cpu = rope_backward_cpu(&dy, d_head, &cos_table, &sin_table);
         let ctx = GpuContext::new();

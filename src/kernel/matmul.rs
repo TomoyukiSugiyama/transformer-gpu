@@ -204,9 +204,9 @@ mod tests {
     #[test]
     fn test_matmul_random() {
         let (m, k, n) = (64, 64, 64);
-        // ランダム入力（再現性のため固定シード）
-        let a = random_f32(m * k, 42);
-        let b = random_f32(k * n, 43);
+        let scale = 0.1f32;
+        let a = random_f32(m * k, 42, scale);
+        let b = random_f32(k * n, 43, scale);
 
         let cpu = matmul_cpu(&a, &b, m, k, n, false, false);
         let ctx = GpuContext::new();
@@ -218,8 +218,9 @@ mod tests {
     #[test]
     fn test_trans_a() {
         let (m, k, n) = (3, 5, 7);
-        let a = random_f32(m * k, 42);
-        let b = random_f32(k * n, 43);
+        let scale = 0.1f32;
+        let a = random_f32(m * k, 42, scale);
+        let b = random_f32(k * n, 43, scale);
 
         let cpu = matmul_cpu(&a, &b, m, k, n, true, false);
         let ctx = GpuContext::new();
@@ -231,8 +232,9 @@ mod tests {
     #[test]
     fn test_trans_b() {
         let (m, k, n) = (3, 5, 7);
-        let a = random_f32(m * k, 42);
-        let b = random_f32(k * n, 43);
+        let scale = 0.1f32;
+        let a = random_f32(m * k, 42, scale);
+        let b = random_f32(k * n, 43, scale);
 
         let cpu = matmul_cpu(&a, &b, m, k, n, false, true);
         let ctx = GpuContext::new();
@@ -244,8 +246,9 @@ mod tests {
     #[test]
     fn test_trans_ab() {
         let (m, k, n) = (3, 5, 7);
-        let a = random_f32(m * k, 42);
-        let b = random_f32(k * n, 43);
+        let scale = 0.1f32;
+        let a = random_f32(m * k, 42, scale);
+        let b = random_f32(k * n, 43, scale);
 
         let cpu = matmul_cpu(&a, &b, m, k, n, true, true);
         let ctx = GpuContext::new();
@@ -257,8 +260,9 @@ mod tests {
     #[test]
     fn test_matmul_non_tile_boundary() {
         let (m, k, n) = (32usize, 100usize, 17usize);
-        let a = random_f32(m * k, 1);
-        let b = random_f32(k * n, 2);
+        let scale = 0.1f32;
+        let a = random_f32(m * k, 1, scale);
+        let b = random_f32(k * n, 2, scale);
 
         let cpu = matmul_cpu(&a, &b, m, k, n, false, false);
         let ctx = GpuContext::new();
@@ -270,8 +274,9 @@ mod tests {
     #[test]
     fn test_matmul_forward() {
         let (m, k, n) = (10, 11, 12);
-        let a = random_f32(m * k, 42);
-        let b = random_f32(k * n, 43);
+        let scale = 0.1f32;
+        let a = random_f32(m * k, 42, scale);
+        let b = random_f32(k * n, 43, scale);
 
         let cpu = matmul_forward_cpu(&a, &b, m, k, n);
         let ctx = GpuContext::new();
@@ -283,9 +288,10 @@ mod tests {
     #[test]
     fn test_matmul_backward() {
         let (m, k, n) = (10, 11, 12);
-        let dy = random_f32(m * n, 42);
-        let x = random_f32(m * k, 43);
-        let w = random_f32(k * n, 44);
+        let scale = 0.1f32;
+        let dy = random_f32(m * n, 42, scale);
+        let x = random_f32(m * k, 43, scale);
+        let w = random_f32(k * n, 44, scale);
 
         let (cpu_dx, cpu_dw) = matmul_backward_cpu(&dy, &x, &w, m, k, n);
         let ctx = GpuContext::new();

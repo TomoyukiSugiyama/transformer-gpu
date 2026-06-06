@@ -37,11 +37,12 @@ pub struct AttentionBackward {
 
 impl Attention {
     pub fn new(cfg: &ModelConfig) -> Self {
+        let scale = (1.0 / cfg.d_model as f32).sqrt();
         Self {
-            w_q: random_f32(cfg.d_model * cfg.d_model, 32),
-            w_k: random_f32(cfg.d_model * cfg.d_model, 33),
-            w_v: random_f32(cfg.d_model * cfg.d_model, 34),
-            w_o: random_f32(cfg.d_model * cfg.d_model, 35),
+            w_q: random_f32(cfg.d_model * cfg.d_model, 32, scale),
+            w_k: random_f32(cfg.d_model * cfg.d_model, 33, scale),
+            w_v: random_f32(cfg.d_model * cfg.d_model, 34, scale),
+            w_o: random_f32(cfg.d_model * cfg.d_model, 35, scale),
         }
     }
 
@@ -434,7 +435,8 @@ mod test {
         let mut cache = AttentionForwardCache::default();
         let attn = Attention::new(&cfg);
         let seq = 64usize;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31, scale);
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
 
         let cpu = attn.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
@@ -453,7 +455,8 @@ mod test {
         let mut cache = AttentionForwardCache::default();
         let attn = Attention::new(&cfg);
         let seq = 64usize;
-        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31);
+        let scale = 0.1f32;
+        let x: Vec<f32> = random_f32(seq * cfg.d_model, 31, scale);
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
 
         let dy_cpu = attn.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
