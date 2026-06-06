@@ -129,7 +129,13 @@ impl AdamW {
 impl Checkpointable for AdamW {
     fn to_weight_map(&self) -> WeightMap {
         let mut map = WeightMap::new();
-        map.insert_scalar("step", self.step_count as u64);
+        map.insert_scalar("lr", self.lr.to_bits() as u64);
+        map.insert_scalar("beta1", self.beta1.to_bits() as u64);
+        map.insert_scalar("beta2", self.beta2.to_bits() as u64);
+        map.insert_scalar("eps", self.eps.to_bits() as u64);
+        map.insert_scalar("wd", self.wd.to_bits() as u64);
+        map.insert_scalar("step_cout", self.step_count as u64);
+        map.insert_scalar("grad_scale", self.grad_scale.to_bits() as u64);
         for (k, param) in &self.params {
             map.insert_vector(&format!("m.{k}"), param.m.clone());
             map.insert_vector(&format!("v.{k}"), param.v.clone());
@@ -139,7 +145,13 @@ impl Checkpointable for AdamW {
     }
 
     fn from_weight_map(&mut self, map: &WeightMap) -> std::io::Result<()> {
-        self.step_count = map.get_scalar("step")? as usize;
+        self.lr = f32::from_bits(map.get_scalar("lr")? as u32);
+        self.beta1 = f32::from_bits(map.get_scalar("beta1")? as u32);
+        self.beta2 = f32::from_bits(map.get_scalar("beta2")? as u32);
+        self.eps = f32::from_bits(map.get_scalar("eps")? as u32);
+        self.wd = f32::from_bits(map.get_scalar("wd")? as u32);
+        self.step_count = map.get_scalar("step_cout")? as usize;
+        self.grad_scale = f32::from_bits(map.get_scalar("grad_scale")? as u32);
         for key in map.vector_keys() {
             if let Some(k) = key.strip_prefix("data.") {
                 let data = map.get_vector(key)?.clone();
@@ -175,6 +187,16 @@ impl Checkpointable for AdamW {
                 entry.v = map.get_vector(key)?.clone();
             }
         }
+
+        for (k, p) in &self.params {
+            if p.data.len() != p.m.len() || p.data.len() != p.v.len() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("AdamW state size mismatch for {k}"),
+                ));
+            }
+        }
+
         Ok(())
     }
 }

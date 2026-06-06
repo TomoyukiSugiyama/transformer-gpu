@@ -1,7 +1,7 @@
 use std::{io::Write, time::Instant};
 
 use crate::{
-    checkpoint::Checkpointable,
+    checkpoint::{Checkpointable, WeightMap},
     dataset::{Dataset, Split},
     gpu_context::GpuContext,
     kernel::{adam_w::AdamW, cross_entropy_loss::cross_entropy_loss},
@@ -188,11 +188,36 @@ impl Trainer {
         &mut self,
         ctx: &GpuContext,
         model: &mut LanguageModel,
-        cfg: &ModelConfig,
-        // token_ids: &[u32],
+        cfg: &mut ModelConfig,
         dataset: &Dataset,
+        resume_ckpt: Option<&str>,
     ) {
         let mut rng = StdRng::seed_from_u64(self.tcfg.seed);
+        let mut start_step = 0usize;
+        let mut best_val = f32::INFINITY;
+        if let Some(path) = resume_ckpt {
+            let map = WeightMap::load(path).unwrap();
+            cfg.from_weight_map(&map.scoped("meta.model")).unwrap();
+            model.from_weight_map(&map).unwrap();
+            self.opt.from_weight_map(&map.scoped("optimizer")).unwrap();
+            start_step = map.get_scalar("meta.step").unwrap_or(0) as usize;
+            best_val = map
+                .get_scalar("meta.best_val")
+                .map(|v| f32::from_bits(v as u32))
+                .unwrap_or(f32::INFINITY);
+
+            // Consume RNG to synchronize
+            let max_offset_train = dataset.train.len() - self.tcfg.seq_len - 1;
+            let max_offset_val = dataset.val.len() - self.tcfg.seq_len - 1;
+            for step in 1..=start_step {
+                let _ = rng.random_range(0..=max_offset_train);
+                if step % self.tcfg.eval_interval == 0 {
+                    let _ = rng.random_range(0..=max_offset_val);
+                }
+            }
+            println!("# resume from checkpoint: {}", path);
+        }
+
         let mut cache = LanguageModelForwardCache::new(cfg.n_layers);
         println!(
             "# d_model={}, n_heads={}, n_kv_heads={}, d_ff={}, n_layers={}, max_seq_len={}, vocab_size={}, dropout={}",
@@ -206,17 +231,18 @@ impl Trainer {
             cfg.dropout_p,
         );
         println!(
-            "# train_tokens={} val_tokens={}",
+            "# train_tokens={}, val_tokens={}, start_step={}, best_val={}",
             dataset.train.len(),
-            dataset.val.len()
+            dataset.val.len(),
+            start_step + 1,
+            best_val
         );
 
-        let mut best_val = f32::INFINITY;
         println!("step,loss,ms_per_step,elapsed_s");
         let train_start = Instant::now();
         let mut window_start = Instant::now();
 
-        for step in 1..=self.tcfg.max_steps {
+        for step in start_step + 1..=self.tcfg.max_steps {
             let window = dataset.sample_window(Split::Train, self.tcfg.seq_len, &mut rng);
             let loss = self.train_step(ctx, model, cfg, &mut cache, &window);
 
@@ -243,9 +269,11 @@ impl Trainer {
                     best_val = vl;
                     let mut map = model.to_weight_map();
                     map.insert_scalar("meta.step", step as u64);
+                    map.insert_scalar("meta.best_val", best_val.to_bits() as u64);
+                    map.merge("meta.model", cfg.to_weight_map());
                     map.merge("optimizer", self.opt.to_weight_map());
                     map.save("checkpoints/best.ckpt").unwrap();
-                    println!("#  → checkpoint saved (val_loss={vl:.4})");
+                    println!("# → checkpoint saved (val_loss={vl:.4})");
                 }
             }
         }

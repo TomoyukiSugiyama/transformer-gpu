@@ -36,8 +36,8 @@ backward カーネル実装、AdamW の GPU 化、loss 計算。CPU 版より複
 
 -> [G-1-5](g1-5.md)
 
-### G-1-6 検証
-Phase 8a の .bin チェックポイントをロードして推論し、CPU 版と同一出力が出るかを確認する受け入れテスト。
+### G-1-6 推論
+Tokenizer、KV cache、GQA 実装。top-k、top-p を追加し推論
 
 ## Phase G-2: クラウド GPU サーバに移植
 - NVIDIA A100/H100 (CUDA) に移行

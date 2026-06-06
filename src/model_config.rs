@@ -1,3 +1,7 @@
+use std::io;
+
+use crate::checkpoint::{Checkpointable, WeightMap};
+
 pub struct ModelConfig {
     pub vocab_size: usize,
     pub d_model: usize,
@@ -14,7 +18,7 @@ pub struct ModelConfig {
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
-            vocab_size: 256, // テスト用デフォルト
+            vocab_size: 256,
             d_model: 64,
             n_heads: 4,
             n_kv_heads: 4,
@@ -47,5 +51,47 @@ impl ModelConfig {
 
     pub fn d_head(&self) -> usize {
         self.d_model / self.n_heads
+    }
+}
+
+impl Checkpointable for ModelConfig {
+    fn to_weight_map(&self) -> WeightMap {
+        let mut map = WeightMap::new();
+        map.insert_scalar("vocab_size", self.vocab_size as u64);
+        map.insert_scalar("d_model", self.d_model as u64);
+        map.insert_scalar("n_heads", self.n_heads as u64);
+        map.insert_scalar("n_kv_heads", self.n_kv_heads as u64);
+        map.insert_scalar("d_ff", self.d_ff as u64);
+        map.insert_scalar("n_layers", self.n_layers as u64);
+        map.insert_scalar("max_seq_len", self.max_seq_len as u64);
+        map
+    }
+
+    fn from_weight_map(&mut self, map: &WeightMap) -> io::Result<()> {
+        macro_rules! check {
+            ($key:expr, $actual:expr) => {
+                if map.get_scalar($key)? != $actual as u64 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "model config mismatch: {} expected={}, got={}",
+                            $key,
+                            $actual,
+                            map.get_scalar($key)?
+                        ),
+                    ));
+                }
+            };
+        }
+
+        check!("vocab_size", self.vocab_size);
+        check!("d_model", self.d_model);
+        check!("n_heads", self.n_heads);
+        check!("n_kv_heads", self.n_kv_heads);
+        check!("d_ff", self.d_ff);
+        check!("n_layers", self.n_layers);
+        check!("max_seq_len", self.max_seq_len);
+
+        Ok(())
     }
 }
