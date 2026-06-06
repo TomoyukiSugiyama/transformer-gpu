@@ -134,7 +134,7 @@ impl Checkpointable for AdamW {
         map.insert_scalar("beta2", self.beta2.to_bits() as u64);
         map.insert_scalar("eps", self.eps.to_bits() as u64);
         map.insert_scalar("wd", self.wd.to_bits() as u64);
-        map.insert_scalar("step_cout", self.step_count as u64);
+        map.insert_scalar("step_count", self.step_count as u64);
         map.insert_scalar("grad_scale", self.grad_scale.to_bits() as u64);
         for (k, param) in &self.params {
             map.insert_vector(&format!("m.{k}"), param.m.clone());
@@ -150,7 +150,7 @@ impl Checkpointable for AdamW {
         self.beta2 = f32::from_bits(map.get_scalar("beta2")? as u32);
         self.eps = f32::from_bits(map.get_scalar("eps")? as u32);
         self.wd = f32::from_bits(map.get_scalar("wd")? as u32);
-        self.step_count = map.get_scalar("step_cout")? as usize;
+        self.step_count = map.get_scalar("step_count")? as usize;
         self.grad_scale = f32::from_bits(map.get_scalar("grad_scale")? as u32);
         for key in map.vector_keys() {
             if let Some(k) = key.strip_prefix("data.") {
