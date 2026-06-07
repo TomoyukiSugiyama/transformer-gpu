@@ -442,7 +442,7 @@ mod test {
         let cpu = attn.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
         let gpu = attn.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
 
-        assert_close(&gpu, &cpu, 1e-3, 1e-4);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 
     #[test]
@@ -465,10 +465,10 @@ mod test {
         let cpu = attn.backward_cpu(&cfg, &dy_cpu, &cos_table, &sin_table, &mut cache_cpu);
         let gpu = attn.backward(&ctx, &cfg, &dy_gpu, &cos_table, &sin_table, &mut cache);
 
-        assert_close(&gpu.dx, &cpu.dx, 1e-2, 1e-3);
-        assert_close(&gpu.dw_q, &cpu.dw_q, 1e-2, 1e-3);
-        assert_close(&gpu.dw_k, &cpu.dw_k, 1e-2, 1e-3);
-        assert_close(&gpu.dw_v, &cpu.dw_v, 1e-2, 1e-3);
-        assert_close(&gpu.dw_o, &cpu.dw_o, 1e-2, 1e-3);
+        assert_close(&gpu.dx, &cpu.dx, 1e-4, 1e-5);
+        assert_close(&gpu.dw_q, &cpu.dw_q, 1e-4, 1e-5);
+        assert_close(&gpu.dw_k, &cpu.dw_k, 1e-4, 1e-5);
+        assert_close(&gpu.dw_v, &cpu.dw_v, 1e-4, 1e-5);
+        assert_close(&gpu.dw_o, &cpu.dw_o, 1e-4, 1e-5);
     }
 }

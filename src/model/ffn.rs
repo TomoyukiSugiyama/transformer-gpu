@@ -356,9 +356,9 @@ mod test {
         let cpu = ffn.backward_cpu(&cfg, &dx_cpu, &mut cache_cpu);
         let gpu = ffn.backward(&ctx, &cfg, &dx_gpu, &mut cache_gpu);
 
-        assert_close(&gpu.dx, &cpu.dx, 1e-3, 1e-4);
-        assert_close(&gpu.dw_gate, &cpu.dw_gate, 1e-3, 1e-4);
-        assert_close(&gpu.dw_up, &cpu.dw_up, 1e-3, 1e-4);
-        assert_close(&gpu.dw_down, &cpu.dw_down, 1e-3, 1e-4);
+        assert_close(&gpu.dx, &cpu.dx, 1e-4, 1e-5);
+        assert_close(&gpu.dw_gate, &cpu.dw_gate, 1e-4, 1e-5);
+        assert_close(&gpu.dw_up, &cpu.dw_up, 1e-4, 1e-5);
+        assert_close(&gpu.dw_down, &cpu.dw_down, 1e-4, 1e-5);
     }
 }

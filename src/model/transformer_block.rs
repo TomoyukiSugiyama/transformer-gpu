@@ -101,7 +101,7 @@ impl TransformerBlock {
             cfg.eps,
             cfg.d_model as u32,
         );
-        
+
         let d_add1: Vec<f32> = dy
             .iter()
             .zip(d_add1_from_norm2.iter())
@@ -110,15 +110,10 @@ impl TransformerBlock {
 
         // let d_attn_out = d_add1_out.clone();
         // let dx_a = d_add1_out;
-        let attn_backward = self.attn.backward(
-            &ctx,
-            cfg,
-            &d_add1,
-            cos_table,
-            sin_table,
-            &mut cache.attn,
-        );
-        
+        let attn_backward =
+            self.attn
+                .backward(&ctx, cfg, &d_add1, cos_table, sin_table, &mut cache.attn);
+
         let (dx_from_norm1, d_gamma_1) = rms_norm_backward(
             &ctx,
             &attn_backward.dx,
@@ -127,7 +122,7 @@ impl TransformerBlock {
             cfg.eps,
             cfg.d_model as u32,
         );
-        
+
         let dx: Vec<f32> = d_add1
             .iter()
             .zip(dx_from_norm1.iter())
@@ -250,7 +245,7 @@ mod test {
         let cpu = tf.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
         let gpu = tf.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
 
-        assert_close(&gpu, &cpu, 1e-1, 1e-3);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 
     #[test]
@@ -275,28 +270,28 @@ mod test {
         let cpu = tf.backward_cpu(&cfg, &dy_cpu, &cos_table, &sin_table, &mut cache_cpu);
         let gpu = tf.backward(&ctx, &cfg, &dy_gpu, &cos_table, &sin_table, &mut cache);
 
-        assert_close(&gpu.dx, &cpu.dx, 1e-1, 1e-3);
-        assert_close(&gpu.attn_backward.dx, &cpu.attn_backward.dx, 1e-1, 1e-3);
-        assert_close(&gpu.attn_backward.dw_q, &cpu.attn_backward.dw_q, 1e-1, 1e-3);
-        assert_close(&gpu.attn_backward.dw_k, &cpu.attn_backward.dw_k, 1e-1, 1e-3);
-        assert_close(&gpu.attn_backward.dw_v, &cpu.attn_backward.dw_v, 1e-1, 1e-3);
-        assert_close(&gpu.attn_backward.dw_o, &cpu.attn_backward.dw_o, 1e-1, 1e-3);
-        assert_close(&gpu.ffn_backward.dx, &cpu.ffn_backward.dx, 1e-1, 1e-3);
+        assert_close(&gpu.dx, &cpu.dx, 1e-4, 1e-5);
+        assert_close(&gpu.attn_backward.dx, &cpu.attn_backward.dx, 1e-4, 1e-5);
+        assert_close(&gpu.attn_backward.dw_q, &cpu.attn_backward.dw_q, 1e-4, 1e-5);
+        assert_close(&gpu.attn_backward.dw_k, &cpu.attn_backward.dw_k, 1e-4, 1e-5);
+        assert_close(&gpu.attn_backward.dw_v, &cpu.attn_backward.dw_v, 1e-4, 1e-5);
+        assert_close(&gpu.attn_backward.dw_o, &cpu.attn_backward.dw_o, 1e-4, 1e-5);
+        assert_close(&gpu.ffn_backward.dx, &cpu.ffn_backward.dx, 1e-4, 1e-5);
         assert_close(
             &gpu.ffn_backward.dw_gate,
             &cpu.ffn_backward.dw_gate,
-            1e-1,
-            1e-3,
+            1e-4,
+            1e-5,
         );
-        assert_close(&gpu.ffn_backward.dw_up, &cpu.ffn_backward.dw_up, 1e-1, 1e-3);
+        assert_close(&gpu.ffn_backward.dw_up, &cpu.ffn_backward.dw_up, 1e-4, 1e-5);
         assert_close(
             &gpu.ffn_backward.dw_down,
             &cpu.ffn_backward.dw_down,
-            1e-1,
-            1e-3,
+            1e-4,
+            1e-5,
         );
-        assert_close(&gpu.d_gamma_1, &cpu.d_gamma_1, 1e-1, 1e-3);
-        assert_close(&gpu.d_gamma_2, &cpu.d_gamma_2, 1e-1, 1e-3);
+        assert_close(&gpu.d_gamma_1, &cpu.d_gamma_1, 1e-4, 1e-5);
+        assert_close(&gpu.d_gamma_2, &cpu.d_gamma_2, 1e-4, 1e-5);
     }
 
     #[test]
@@ -319,7 +314,7 @@ mod test {
         let cpu = tf.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
         let gpu = tf.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
 
-        assert_close(&gpu, &cpu, 1e-1, 1e-3);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 
     #[test]
@@ -343,7 +338,7 @@ mod test {
         let cpu = tf.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
         let gpu = tf.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
 
-        assert_close(&gpu, &cpu, 2e-1, 1e-1);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 
     #[test]
@@ -368,6 +363,6 @@ mod test {
         let cpu = tf.forward_cpu(&cfg, &x, &cos_table, &sin_table, &mut cache_cpu);
         let gpu = tf.forward(&ctx, &cfg, &x, &cos_table, &sin_table, &mut cache);
 
-        assert_close(&gpu, &cpu, 1e-1, 1e-3);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
 }

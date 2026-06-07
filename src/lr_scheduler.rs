@@ -109,13 +109,13 @@ mod tests {
         assert!(approx_eq(s.get_lr(0), 0.0, 1e-6));
         assert!(approx_eq(s.get_lr(50), 0.5, 1e-6));
         // step=100 なら warmup を抜けて cosine の頭 (= lr_max)
-        assert!(approx_eq(s.get_lr(100), 1.0, 1e-3));
+        assert!(approx_eq(s.get_lr(100), 1.0, 1e-4));
     }
 
     #[test]
     fn warmup_cosine_reaches_lr_min_at_total_steps() {
         let s = LrScheduler::new(1.0, 0.1, 100, 1000);
-        assert!(approx_eq(s.get_lr(1000), 0.1, 1e-3));
+        assert!(approx_eq(s.get_lr(1000), 0.1, 1e-4));
     }
 
     #[test]
@@ -124,7 +124,7 @@ mod tests {
         // → lr = lr_min + 0.5*(lr_max-lr_min)*(1+cos(pi*0.5)) = lr_min + 0.5*(lr_max-lr_min)
         //      = 0.1 + 0.5 * 0.9 = 0.55
         let s = LrScheduler::new(1.0, 0.1, 100, 1100);
-        assert!(approx_eq(s.get_lr(600), 0.55, 1e-3));
+        assert!(approx_eq(s.get_lr(600), 0.55, 1e-4));
     }
 
     #[test]
@@ -139,9 +139,9 @@ mod tests {
         // warmup
         assert!(approx_eq(s.get_lr(50), 0.5, 1e-6));
         // stable (warmup_end=100 〜 stable_end=600 の間)
-        assert!(approx_eq(s.get_lr(100), 1.0, 1e-3));
-        assert!(approx_eq(s.get_lr(300), 1.0, 1e-3));
-        assert!(approx_eq(s.get_lr(599), 1.0, 1e-3));
+        assert!(approx_eq(s.get_lr(100), 1.0, 1e-4));
+        assert!(approx_eq(s.get_lr(300), 1.0, 1e-4));
+        assert!(approx_eq(s.get_lr(599), 1.0, 1e-4));
     }
 
     #[test]
@@ -154,9 +154,9 @@ mod tests {
             LrScheduleKind::WarmupStableDecay { stable_steps: 500 },
         );
         // decay 開始: step=600 → progress=0 → lr=lr_max=1.0
-        assert!(approx_eq(s.get_lr(600), 1.0, 1e-3));
+        assert!(approx_eq(s.get_lr(600), 1.0, 1e-4));
         // 終端: step=1000 → progress=1 → lr=lr_min=0.1
-        assert!(approx_eq(s.get_lr(1000), 0.1, 1e-3));
+        assert!(approx_eq(s.get_lr(1000), 0.1, 1e-4));
         // 中点 step=800 → progress=0.5 → 1 - sqrt(0.5) ≒ 0.293
         // → lr = 0.1 + 0.9 * 0.293 = 0.364
         assert!(approx_eq(s.get_lr(800), 0.364, 1e-2));
