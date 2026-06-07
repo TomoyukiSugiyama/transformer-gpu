@@ -14,7 +14,7 @@ fn bench_matmul(c: &mut Criterion) {
     let ctx = GpuContext::new();
     let seq = 512u32;
     let d_model = 64u32;
-    let scale = 1.0f32;
+    let scale = (1.0 / d_model as f32).sqrt();
     let a = random_f32((seq * d_model) as usize, 0, scale);
     let b = random_f32((d_model * d_model) as usize, 1, scale);
 
@@ -27,7 +27,8 @@ fn bench_attention(c: &mut Criterion) {
     let ctx = GpuContext::new();
     let seq = 512u32;
     let d_head = 16u32;
-    let scale = 1.0f32;
+    let d_model = 64u32;
+    let scale = (1.0 / d_model as f32).sqrt();
     let q = random_f32((seq * d_head) as usize, 0, scale);
     let k = random_f32((seq * d_head) as usize, 1, scale);
     let v = random_f32((seq * d_head) as usize, 2, scale);
