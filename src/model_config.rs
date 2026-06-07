@@ -52,7 +52,7 @@ impl ModelConfig {
     /// GPT-2 small (124M) 相当の設定例
     pub fn gpt2_small() -> Self {
         Self {
-            vocab_size: 5_257,
+            vocab_size: 50_257,
             d_model: 768,
             n_heads: 12,
             n_kv_heads: 12, // MHA
