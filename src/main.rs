@@ -11,6 +11,7 @@ fn main() {
     let mut cfg = ModelConfig::g1_6();
     let mut model = LanguageModel::new(&cfg);
     let mut trainer = Trainer::new(TrainConfig {
+        log_interval: 20,
         ..Default::default()
     });
 

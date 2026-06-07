@@ -81,45 +81,19 @@ impl Trainer {
 
         let grads = model.backward(ctx, cfg, &d_logits, cache);
 
-        let max_norm = self.tcfg.grad_clip;
-        let mut sum_sq = 0.0f32;
-        let add_sq = |s: &mut f32, g: &[f32]| *s += g.iter().map(|x| x * x).sum::<f32>();
-        add_sq(&mut sum_sq, &grads.d_embedding);
-        add_sq(&mut sum_sq, &grads.d_final_gamma);
-        add_sq(&mut sum_sq, &grads.d_lm_head);
-        for bwd in &grads.d_blocks {
-            add_sq(&mut sum_sq, &bwd.d_gamma_1);
-            add_sq(&mut sum_sq, &bwd.d_gamma_2);
-            add_sq(&mut sum_sq, &bwd.attn_backward.dw_q);
-            add_sq(&mut sum_sq, &bwd.attn_backward.dw_k);
-            add_sq(&mut sum_sq, &bwd.attn_backward.dw_v);
-            add_sq(&mut sum_sq, &bwd.attn_backward.dw_o);
-            add_sq(&mut sum_sq, &bwd.ffn_backward.dw_gate);
-            add_sq(&mut sum_sq, &bwd.ffn_backward.dw_up);
-            add_sq(&mut sum_sq, &bwd.ffn_backward.dw_down);
-        }
-        let global_norm = sum_sq.sqrt();
-        let clip = if global_norm > max_norm {
-            max_norm / (global_norm + 1e-6)
-        } else {
-            1.0
-        };
-
         // --- AdamW step ---
         self.opt.set_lr(lr);
         self.opt.increment_step();
 
-        let g = |v: &[f32]| -> Vec<f32> { v.iter().map(|&x| x * clip).collect() };
-
         self.opt
-            .step("embedding", &mut model.embedding, &g(&grads.d_embedding));
+            .step("embedding", &mut model.embedding, &grads.d_embedding);
         self.opt.step(
             "final_gamma",
             &mut model.final_gamma,
-            &g(&grads.d_final_gamma),
+            &grads.d_final_gamma,
         );
         self.opt
-            .step("lm_head", &mut model.lm_head, &g(&grads.d_lm_head));
+            .step("lm_head", &mut model.lm_head, &grads.d_lm_head);
 
         for (i, (block, bwd)) in model
             .blocks
@@ -130,34 +104,34 @@ impl Trainer {
             self.opt.step(
                 &format!("b{i}.gamma_1"),
                 &mut block.gamma_1,
-                &g(&bwd.d_gamma_1),
+                &bwd.d_gamma_1,
             );
             self.opt.step(
                 &format!("b{i}.gamma_2"),
                 &mut block.gamma_2,
-                &g(&bwd.d_gamma_2),
+                &bwd.d_gamma_2,
             );
             let ab = &bwd.attn_backward;
             self.opt
-                .step(&format!("b{i}.wq"), &mut block.attn.w_q, &g(&ab.dw_q));
+                .step(&format!("b{i}.wq"), &mut block.attn.w_q, &ab.dw_q);
             self.opt
-                .step(&format!("b{i}.wk"), &mut block.attn.w_k, &g(&ab.dw_k));
+                .step(&format!("b{i}.wk"), &mut block.attn.w_k, &ab.dw_k);
             self.opt
-                .step(&format!("b{i}.wv"), &mut block.attn.w_v, &g(&ab.dw_v));
+                .step(&format!("b{i}.wv"), &mut block.attn.w_v, &ab.dw_v);
             self.opt
-                .step(&format!("b{i}.wo"), &mut block.attn.w_o, &g(&ab.dw_o));
+                .step(&format!("b{i}.wo"), &mut block.attn.w_o, &ab.dw_o);
             let fb = &bwd.ffn_backward;
             self.opt.step(
                 &format!("b{i}.w_gate"),
                 &mut block.ffn.w_gate,
-                &g(&fb.dw_gate),
+                &fb.dw_gate,
             );
             self.opt
-                .step(&format!("b{i}.w_up"), &mut block.ffn.w_up, &g(&fb.dw_up));
+                .step(&format!("b{i}.w_up"), &mut block.ffn.w_up, &fb.dw_up);
             self.opt.step(
                 &format!("b{i}.w_down"),
                 &mut block.ffn.w_down,
-                &g(&fb.dw_down),
+                &fb.dw_down,
             );
         }
 
