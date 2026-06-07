@@ -16,7 +16,8 @@ fn bench_transformer_block(c: &mut Criterion) {
         ..Default::default()
     };
     let seq = 512usize;
-    let x = random_f32(seq * cfg.d_model, 0);
+    let scale = 1.0f32;
+    let x = random_f32(seq * cfg.d_model, 0, scale);
     let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
     let block = TransformerBlock::new(&cfg);
     let mut cache = TransformerBlockForwardCache::default();

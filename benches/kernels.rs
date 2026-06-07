@@ -14,8 +14,9 @@ fn bench_matmul(c: &mut Criterion) {
     let ctx = GpuContext::new();
     let seq = 512u32;
     let d_model = 64u32;
-    let a = random_f32((seq * d_model) as usize, 0);
-    let b = random_f32((d_model * d_model) as usize, 1);
+    let scale = 1.0f32;
+    let a = random_f32((seq * d_model) as usize, 0, scale);
+    let b = random_f32((d_model * d_model) as usize, 1, scale);
 
     c.bench_function("matmul 512x64x64", |bencher| {
         bencher.iter(|| matmul_forward(&ctx, &a, &b, seq, d_model, d_model));
@@ -26,9 +27,10 @@ fn bench_attention(c: &mut Criterion) {
     let ctx = GpuContext::new();
     let seq = 512u32;
     let d_head = 16u32;
-    let q = random_f32((seq * d_head) as usize, 0);
-    let k = random_f32((seq * d_head) as usize, 1);
-    let v = random_f32((seq * d_head) as usize, 2);
+    let scale = 1.0f32;
+    let q = random_f32((seq * d_head) as usize, 0, scale);
+    let k = random_f32((seq * d_head) as usize, 1, scale);
+    let v = random_f32((seq * d_head) as usize, 2, scale);
 
     let mut group = c.benchmark_group("attention seq=512 d_head=64");
 
