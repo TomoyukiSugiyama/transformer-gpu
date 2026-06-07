@@ -1,3 +1,4 @@
+pub mod char_bpe_tokenizer;
 pub mod checkpoint;
 pub mod dataset;
 pub mod gpu_context;

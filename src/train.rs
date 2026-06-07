@@ -249,21 +249,25 @@ impl Trainer {
             cfg.dropout_p,
         );
         println!(
-            "# lr_max={}, lr_min={}, warmup_steps={}, end_step={}, lr_schedule={:?}, start_step={}, best_val={}",
+            "# lr_schedule={:?}, lr_max={}, lr_min={}, warmup_steps={}, end_step={}",
+            self.tcfg.lr_schedule_kind,
             self.tcfg.lr_max,
             self.tcfg.lr_min,
             self.tcfg.warmup_steps,
             self.tcfg.end_step,
-            self.tcfg.lr_schedule_kind,
-            start_step,
-            best_val
         );
         println!(
-            "# train_tokens={}, val_tokens={}, val_chars={}",
+            "# tokenizer=CharBpeTokenizer train_tokens={}, val_tokens={}, val_chars={}, val_chars_per_token={:.4}",
             dataset.train.len(),
             dataset.val.len(),
-            dataset.val_chars
+            dataset.val_text_len_chars,
+            if dataset.val.is_empty() {
+                0.0
+            } else {
+                dataset.val_text_len_chars as f32 / dataset.val.len() as f32
+            }
         );
+        println!("# start_step={}, best_val={}", start_step, best_val);
 
         println!("step,loss,ema,ppl,ema_ppl,lr,ms_per_step,elapsed_s");
         let train_start = Instant::now();
@@ -304,9 +308,9 @@ impl Trainer {
                     &dataset.val,
                     self.tcfg.seed + step as u64,
                 );
-                let bpc = if dataset.val_chars > 0 && !dataset.val.is_empty() {
+                let bpc = if dataset.val_text_len_chars > 0 && !dataset.val.is_empty() {
                     vl / std::f32::consts::LN_2
-                        * (dataset.val.len() as f32 / dataset.val_chars as f32)
+                        * (dataset.val.len() as f32 / dataset.val_text_len_chars as f32)
                 } else {
                     f32::NAN
                 };
