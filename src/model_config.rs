@@ -65,6 +65,22 @@ impl ModelConfig {
         }
     }
 
+    /// G-1-6 の設定
+    pub fn g1_6() -> Self {
+        Self {
+            vocab_size: 4000,
+            d_model: 128,
+            n_heads: 4,
+            n_kv_heads: 4,
+            d_ff: 512,
+            n_layers: 2,
+            max_seq_len: 128,
+            dropout_p: 0.1,
+            eps: 1e-6,
+            rope_base: 10_000.0,
+        }
+    }
+
     pub fn d_head(&self) -> usize {
         self.d_model / self.n_heads
     }

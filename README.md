@@ -30,6 +30,7 @@ src/
 |-- checkpoint.rs
 |-- dataset.rs
 |-- gpu_context.rs
+|-- infer.rs
 |-- kernel/     # Rust: wgpu のバッファ・パイプライン管理
 |   |-- adam_w.rs
 |   |-- attention.rs
