@@ -95,7 +95,7 @@ impl TransformerBlock {
         let ffn_backward = self.ffn.backward(&ctx, cfg, &d_ffn_out, &mut cache.ffn);
         let (d_norm2_dx, d_gamma_2) = rms_norm_backward(
             &ctx,
-            &d_ffn_out,
+            &ffn_backward.dx,
             &cache.add1_out,
             &self.gamma_2,
             cfg.eps,
@@ -179,7 +179,7 @@ impl TransformerBlock {
 
         let ffn_backward = self.ffn.backward_cpu(cfg, &d_ffn_out, &mut cache.ffn);
         let (d_norm2_dx, d_gamma_2) = rms_norm_backward_cpu(
-            &d_ffn_out,
+            &ffn_backward.dx,
             &cache.add1_out,
             &self.gamma_2,
             cfg.eps,
