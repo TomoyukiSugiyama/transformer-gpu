@@ -27,25 +27,41 @@ impl Default for ModelConfig {
             max_seq_len: 128,
             dropout_p: 0.1,
             eps: 1e-6,
-            rope_base: 10000.0,
+            rope_base: 10_000.0,
         }
     }
 }
 
 impl ModelConfig {
-    /// Llama-3 8B 相当の設定例
-    pub fn llama3_small() -> Self {
+    /// Llama 3.2 (1B) 相当の設定例
+    pub fn llama3_2() -> Self {
         Self {
-            vocab_size: 4096,
-            d_model: 512,
-            n_heads: 8,
-            n_kv_heads: 8,
-            d_ff: 1024,
-            n_layers: 6,
-            max_seq_len: 2048,
-            dropout_p: 0.1,
+            vocab_size: 128_256,
+            d_model: 2048,
+            n_heads: 32,
+            n_kv_heads: 8, // GQA
+            d_ff: 8192,
+            n_layers: 16,
+            max_seq_len: 131_072,
+            dropout_p: 0.0,
             eps: 1e-6,
-            rope_base: 10000.0,
+            rope_base: 500_000.0,
+        }
+    }
+
+    /// GPT-2 small (124M) 相当の設定例
+    pub fn gpt2_small() -> Self {
+        Self {
+            vocab_size: 5_257,
+            d_model: 768,
+            n_heads: 12,
+            n_kv_heads: 12, // MHA
+            d_ff: 3072,
+            n_layers: 12,
+            max_seq_len: 1024,
+            dropout_p: 0.1,
+            eps: 1e-5,
+            rope_base: 10_000.0, // GPT-2 は RoPE ではない
         }
     }
 
