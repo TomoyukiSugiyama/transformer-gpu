@@ -1,4 +1,4 @@
-const WG: u32 = 256u;
+const WG: u32 = 128u;
 
 struct Dims {
     d_model: u32,
