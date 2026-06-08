@@ -48,6 +48,26 @@ impl Default for TrainConfig {
     }
 }
 
+impl TrainConfig {
+    pub fn tiny_shakespeare() -> Self {
+        Self {
+            eval_interval: 500,
+            eval_batches: 20,
+            seq_len: 128,
+            log_interval: 20,
+            lr_max: 5e-5,
+            lr_min: 5e-4,
+            warmup_steps: 500,
+            end_step: 10000,
+            wd: 0.01,
+            val_split: 0.2,
+            seed: 42,
+            grad_clip: 1.0,
+            lr_schedule_kind: LrScheduleKind::WarmupStableDecay { stable_steps: 8000 },
+        }
+    }
+}
+
 pub struct Trainer {
     pub opt: AdamW,
     pub tcfg: TrainConfig,
@@ -87,11 +107,8 @@ impl Trainer {
 
         self.opt
             .step("embedding", &mut model.embedding, &grads.d_embedding);
-        self.opt.step(
-            "final_gamma",
-            &mut model.final_gamma,
-            &grads.d_final_gamma,
-        );
+        self.opt
+            .step("final_gamma", &mut model.final_gamma, &grads.d_final_gamma);
         self.opt
             .step("lm_head", &mut model.lm_head, &grads.d_lm_head);
 
@@ -101,16 +118,10 @@ impl Trainer {
             .zip(grads.d_blocks.iter())
             .enumerate()
         {
-            self.opt.step(
-                &format!("b{i}.gamma_1"),
-                &mut block.gamma_1,
-                &bwd.d_gamma_1,
-            );
-            self.opt.step(
-                &format!("b{i}.gamma_2"),
-                &mut block.gamma_2,
-                &bwd.d_gamma_2,
-            );
+            self.opt
+                .step(&format!("b{i}.gamma_1"), &mut block.gamma_1, &bwd.d_gamma_1);
+            self.opt
+                .step(&format!("b{i}.gamma_2"), &mut block.gamma_2, &bwd.d_gamma_2);
             let ab = &bwd.attn_backward;
             self.opt
                 .step(&format!("b{i}.wq"), &mut block.attn.w_q, &ab.dw_q);
@@ -121,18 +132,12 @@ impl Trainer {
             self.opt
                 .step(&format!("b{i}.wo"), &mut block.attn.w_o, &ab.dw_o);
             let fb = &bwd.ffn_backward;
-            self.opt.step(
-                &format!("b{i}.w_gate"),
-                &mut block.ffn.w_gate,
-                &fb.dw_gate,
-            );
+            self.opt
+                .step(&format!("b{i}.w_gate"), &mut block.ffn.w_gate, &fb.dw_gate);
             self.opt
                 .step(&format!("b{i}.w_up"), &mut block.ffn.w_up, &fb.dw_up);
-            self.opt.step(
-                &format!("b{i}.w_down"),
-                &mut block.ffn.w_down,
-                &fb.dw_down,
-            );
+            self.opt
+                .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
         }
 
         loss

@@ -65,15 +65,15 @@ impl ModelConfig {
         }
     }
 
-    /// G-1-6 の設定
-    pub fn g1_6() -> Self {
+    /// tiny_shakespeare の設定
+    pub fn tiny_shakespeare() -> Self {
         Self {
             vocab_size: 4000,
-            d_model: 128,
-            n_heads: 4,
-            n_kv_heads: 4,
-            d_ff: 512,
-            n_layers: 2,
+            d_model: 256,
+            n_heads: 8,
+            n_kv_heads: 8,
+            d_ff: 1024,
+            n_layers: 4,
             max_seq_len: 128,
             dropout_p: 0.1,
             eps: 1e-6,

@@ -8,12 +8,9 @@ use transformer_gpu::train::{TrainConfig, Trainer};
 
 fn main() {
     let ctx = GpuContext::new();
-    let mut cfg = ModelConfig::g1_6();
+    let mut cfg = ModelConfig::tiny_shakespeare();
     let mut model = LanguageModel::new(&cfg);
-    let mut trainer = Trainer::new(TrainConfig {
-        log_interval: 20,
-        ..Default::default()
-    });
+    let mut trainer = Trainer::new(TrainConfig::tiny_shakespeare());
 
     let corpus_text = Dataset::from_file("corpus/tiny_shakespeare.txt").unwrap();
 

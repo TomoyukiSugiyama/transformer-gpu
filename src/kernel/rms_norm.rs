@@ -494,7 +494,7 @@ mod test {
             model::transformer_block::{TransformerBlock, TransformerBlockForwardCache},
             model_config::ModelConfig,
         };
-        let cfg = ModelConfig::g1_6();
+        let cfg = ModelConfig::default();
         let ctx = GpuContext::new();
         let mut cache_gpu = TransformerBlockForwardCache::default();
         let mut cache_cpu = TransformerBlockForwardCache::default();
