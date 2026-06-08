@@ -32,11 +32,12 @@ pub struct FfnBackward {
 
 impl Ffn {
     pub fn new(cfg: &ModelConfig) -> Self {
-        let scale = (1.0 / cfg.d_model as f32).sqrt();
+        let scale_in = (1.0 / cfg.d_model as f32).sqrt();
+        let scale_down = (1.0 / cfg.d_ff as f32).sqrt();
         Self {
-            w_gate: random_f32(cfg.d_model * cfg.d_ff, 36, scale),
-            w_up: random_f32(cfg.d_model * cfg.d_ff, 37, scale),
-            w_down: random_f32(cfg.d_ff * cfg.d_model, 38, scale),
+            w_gate: random_f32(cfg.d_model * cfg.d_ff, 36, scale_in),
+            w_up: random_f32(cfg.d_model * cfg.d_ff, 37, scale_in),
+            w_down: random_f32(cfg.d_ff * cfg.d_model, 38, scale_down),
         }
     }
 
@@ -129,7 +130,7 @@ impl Ffn {
         );
 
         // dx = dx_from_gate + dx_from_up
-        let dx = dx_from_up
+        let dx: Vec<f32> = dx_from_up
             .iter()
             .zip(dx_from_gate.iter())
             .map(|(u, g)| u + g)

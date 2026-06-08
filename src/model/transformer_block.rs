@@ -90,10 +90,16 @@ impl TransformerBlock {
         sin_table: &[f32],
         cache: &mut TransformerBlockForwardCache,
     ) -> TransformerBlockBackward {
+        // residual_add backward: out = add1_out + ffn_out
+        // d_add1_out_a = dy, d_ffn_out = dy
         let d_ffn_out = dy.to_vec();
+        let d_add1_out_a = dy.to_vec();
 
+        // FFN backward
         let ffn_backward = self.ffn.backward(&ctx, cfg, &d_ffn_out, &mut cache.ffn);
-        let (d_add1_from_norm2, d_gamma_2) = rms_norm_backward(
+
+        // rms_norm2 backward: norm2_out = rms_norm(add1_out, γ2)
+        let (d_add1_out_b, d_gamma_2) = rms_norm_backward(
             &ctx,
             &ffn_backward.dx,
             &cache.add1_out,
@@ -102,32 +108,34 @@ impl TransformerBlock {
             cfg.d_model as u32,
         );
 
-        let d_add1: Vec<f32> = dy
+        // 2つの d_add1_out を合算
+        let d_add1_out: Vec<f32> = d_add1_out_a
             .iter()
-            .zip(d_add1_from_norm2.iter())
+            .zip(d_add1_out_b.iter())
             .map(|(a, b)| a + b)
             .collect();
 
-        // let d_attn_out = d_add1_out.clone();
-        // let dx_a = d_add1_out;
+        // 1段目 residual_add backward: add1_out = x + attn_out
+        let d_attn_out = d_add1_out.clone();
+        let dx_a = d_add1_out;
+
+        // Attention backward
         let attn_backward =
             self.attn
-                .backward(&ctx, cfg, &d_add1, cos_table, sin_table, &mut cache.attn);
+                .backward(ctx, cfg, &d_attn_out, cos_table, sin_table, &mut cache.attn);
 
-        let (dx_from_norm1, d_gamma_1) = rms_norm_backward(
-            &ctx,
-            &attn_backward.dx,
-            &cache.x_in,
+        // rms_norm1 backward: norm1_out = rms_norm(x_in, γ1)
+        let (dx_b, d_gamma_1) = rms_norm_backward(
+            ctx,
+            &attn_backward.dx, // d_norm1_out
+            &cache.x_in,       // forward の入力
             &self.gamma_1,
             cfg.eps,
             cfg.d_model as u32,
         );
 
-        let dx: Vec<f32> = d_add1
-            .iter()
-            .zip(dx_from_norm1.iter())
-            .map(|(a, b)| a + b)
-            .collect();
+        // dx を合算
+        let dx: Vec<f32> = dx_a.iter().zip(&dx_b).map(|(a, b)| a + b).collect();
 
         TransformerBlockBackward {
             dx,

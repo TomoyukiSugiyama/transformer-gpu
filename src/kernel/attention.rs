@@ -984,7 +984,7 @@ mod test {
     fn test_attention_backward_random() {
         let seq: usize = 1024;
         let d_head: usize = 64;
-        let scale = 0.1f32;
+        let scale = (1.0 / d_head as f32).sqrt();
         let do_: Vec<f32> = random_f32(seq * d_head, 32, scale);
         let q: Vec<f32> = random_f32(seq * d_head, 33, scale);
         let k: Vec<f32> = random_f32(seq * d_head, 34, scale);
@@ -997,9 +997,9 @@ mod test {
         let (gpu_dq, gpu_dk, gpu_dv) =
             attention_backward(&ctx, &do_, &q, &k, &v, &o, &l, seq as u32, d_head as u32);
 
-        assert_close(&gpu_dq, &cpu_dq, 2e-2, 1e-4);
-        assert_close(&gpu_dk, &cpu_dk, 2e-2, 1e-4);
-        assert_close(&gpu_dv, &cpu_dv, 2e-2, 1e-4);
+        assert_close(&gpu_dq, &cpu_dq, 1e-3, 1e-4);
+        assert_close(&gpu_dk, &cpu_dk, 1e-3, 1e-4);
+        assert_close(&gpu_dv, &cpu_dv, 1e-3, 1e-4);
     }
     #[test]
     fn test_attention_non_power_of_two() {

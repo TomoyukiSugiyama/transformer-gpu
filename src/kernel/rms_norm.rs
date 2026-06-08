@@ -373,7 +373,7 @@ mod test {
         let x: Vec<f32> = vec![1.0, 2.0];
         let eps = 1.5;
         let gamma: Vec<f32> = vec![3.0, 3.0];
-        let d_model = 2;
+        let d_model = 2usize;
         let cpu = rms_norm_cpu(&x, &gamma, eps, d_model);
         let ctx = GpuContext::new();
         let gpu = rms_norm(&ctx, &x, &gamma, eps, d_model as u32);
@@ -395,7 +395,7 @@ mod test {
         let x: Vec<f32> = vec![1.0, 2.0];
         let eps = 1.5;
         let gamma: Vec<f32> = vec![3.0, 3.0];
-        let d_model = 2;
+        let d_model = 2usize;
         let (cpu_dx, cpu_dgamma) = rms_norm_backward_cpu(&dy, &x, &gamma, eps, d_model);
         let ctx = GpuContext::new();
         let (gpu_dx, gpu_dgamma) = rms_norm_backward(&ctx, &dy, &x, &gamma, eps, d_model as u32);
@@ -424,8 +424,8 @@ mod test {
 
     #[test]
     fn test_rms_norm_random() {
-        let seq = 4;
-        let d_model = 64;
+        let seq = 4usize;
+        let d_model = 64usize;
         let len = seq * d_model;
         let gamma: Vec<f32> = vec![1.0; d_model];
         let eps = 1e-6;
@@ -440,8 +440,8 @@ mod test {
 
     #[test]
     fn test_rms_norm_backward_random() {
-        let seq = 4;
-        let d_model = 64;
+        let seq = 4usize;
+        let d_model = 64usize;
         let len = seq * d_model;
         let scale = 0.1f32;
         let dy = random_f32(len, 41, scale);
@@ -458,8 +458,8 @@ mod test {
 
     #[test]
     fn test_rms_norm_d512() {
-        let seq = 4;
-        let d_model = 512;
+        let seq = 4usize;
+        let d_model = 512usize;
         let len = seq * d_model;
         let gamma: Vec<f32> = vec![1.0; d_model];
         let eps = 1e-6;
@@ -473,9 +473,90 @@ mod test {
     }
 
     #[test]
+    fn test_rms_norm_d128() {
+        let seq = 128usize;
+        let d_model = 128usize;
+        let len = seq * d_model;
+        let scale = 0.1f32;
+        let gamma: Vec<f32> = vec![1.0; d_model];
+        let eps = 1e-6;
+        let x = random_f32(len, 42, scale);
+        let cpu = rms_norm_cpu(&x, &gamma, eps, d_model);
+        let ctx = GpuContext::new();
+        let gpu = rms_norm(&ctx, &x, &gamma, eps, d_model as u32);
+        assert_close(&gpu, &cpu, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_rms_norm_backward_real_add1_out() {
+        use crate::{
+            kernel::rope::create_table,
+            model::transformer_block::{TransformerBlock, TransformerBlockForwardCache},
+            model_config::ModelConfig,
+        };
+        let cfg = ModelConfig::g1_6();
+        let ctx = GpuContext::new();
+        let mut cache_gpu = TransformerBlockForwardCache::default();
+        let mut cache_cpu = TransformerBlockForwardCache::default();
+        let seq = 128usize;
+        let x = random_f32(seq * cfg.d_model, 31, 0.1);
+        let (cos, sin) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
+        let tf = TransformerBlock::new(&cfg);
+        let _ = tf.forward(&ctx, &cfg, &x, &cos, &sin, &mut cache_gpu);
+        let _ = tf.forward_cpu(&cfg, &x, &cos, &sin, &mut cache_cpu);
+        assert_close(&cache_gpu.add1_out, &cache_cpu.add1_out, 1e-4, 1e-5);
+        let cache = cache_gpu;
+        let dy = random_f32(seq * cfg.d_model, 41, 0.1);
+        let (cpu_dx, _) =
+            rms_norm_backward_cpu(&dy, &cache.add1_out, &tf.gamma_2, cfg.eps, cfg.d_model);
+        let (gpu_dx, _) = rms_norm_backward(
+            &ctx,
+            &dy,
+            &cache.add1_out,
+            &tf.gamma_2,
+            cfg.eps,
+            cfg.d_model as u32,
+        );
+        assert_close(&gpu_dx, &cpu_dx, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_rms_norm_backward_d128_seq4() {
+        let seq = 4usize;
+        let d_model = 128usize;
+        let len = seq * d_model;
+        let scale = 0.1f32;
+        let dy = random_f32(len, 41, scale);
+        let gamma: Vec<f32> = random_f32(d_model, 38, (1.0 / d_model as f32).sqrt());
+        let eps = 1e-6;
+        let x = random_f32(len, 42, scale);
+        let (cpu_dx, _) = rms_norm_backward_cpu(&dy, &x, &gamma, eps, d_model);
+        let ctx = GpuContext::new();
+        let (gpu_dx, _) = rms_norm_backward(&ctx, &dy, &x, &gamma, eps, d_model as u32);
+        assert_close(&gpu_dx, &cpu_dx, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_rms_norm_backward_d128() {
+        let seq = 128usize;
+        let d_model = 128usize;
+        let len = seq * d_model;
+        let scale = 0.1f32;
+        let dy = random_f32(len, 41, scale);
+        let gamma: Vec<f32> = random_f32(d_model, 38, (1.0 / d_model as f32).sqrt());
+        let eps = 1e-6;
+        let x = random_f32(len, 42, scale);
+        let (cpu_dx, cpu_dgamma) = rms_norm_backward_cpu(&dy, &x, &gamma, eps, d_model);
+        let ctx = GpuContext::new();
+        let (gpu_dx, gpu_dgamma) = rms_norm_backward(&ctx, &dy, &x, &gamma, eps, d_model as u32);
+        assert_close(&gpu_dx, &cpu_dx, 1e-4, 1e-5);
+        assert_close(&gpu_dgamma, &cpu_dgamma, 1e-4, 1e-5);
+    }
+
+    #[test]
     fn test_rms_norm_backward_d512() {
-        let seq = 4;
-        let d_model = 512;
+        let seq = 4usize;
+        let d_model = 512usize;
         let len = seq * d_model;
         let scale = 0.1f32;
         let dy = random_f32(len, 41, scale);

@@ -60,6 +60,23 @@ pub fn concat_columns_into(
     out
 }
 
+pub fn finite_slice(name: &str, xs: &[f32]) -> bool {
+    let mut ok = true;
+    for &x in xs {
+        if !x.is_finite() {
+            println!("{name} became NaN/Inf");
+            ok = false;
+            break;
+        }
+        if x.abs() > 1e6 {
+            println!("{name} overflow-ish: {x:e}");
+            ok = false;
+            break;
+        }
+    }
+    ok
+}
+
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
