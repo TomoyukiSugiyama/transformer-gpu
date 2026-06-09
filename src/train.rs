@@ -8,6 +8,7 @@ use crate::{
     lr_scheduler::{LrScheduleKind, LrScheduler},
     model::language_model::{LanguageModel, LanguageModelForwardCache},
     model_config::ModelConfig,
+    tokenizer::TokenizerKind,
 };
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
@@ -26,6 +27,8 @@ pub struct TrainConfig {
     pub val_split: f32,
     pub seed: u64,
     pub grad_clip: f32,
+    pub tokenizer_kind: TokenizerKind,
+    pub corpus: String,
 }
 
 impl Default for TrainConfig {
@@ -44,6 +47,8 @@ impl Default for TrainConfig {
             seed: 42,
             grad_clip: 1.0,
             lr_schedule_kind: LrScheduleKind::WarmupStableDecay { stable_steps: 3800 },
+            tokenizer_kind: TokenizerKind::CharBpe,
+            corpus: String::new(),
         }
     }
 }
@@ -55,8 +60,8 @@ impl TrainConfig {
             eval_batches: 20,
             seq_len: 128,
             log_interval: 20,
-            lr_max: 5e-5,
-            lr_min: 5e-4,
+            lr_max: 5e-4,
+            lr_min: 5e-5,
             warmup_steps: 500,
             end_step: 10000,
             wd: 0.01,
@@ -64,6 +69,8 @@ impl TrainConfig {
             seed: 42,
             grad_clip: 1.0,
             lr_schedule_kind: LrScheduleKind::WarmupStableDecay { stable_steps: 8000 },
+            tokenizer_kind: TokenizerKind::Char,
+            corpus: "corpus/tiny_shakespeare.txt".to_string(),
         }
     }
 }
@@ -236,7 +243,8 @@ impl Trainer {
             self.tcfg.end_step,
         );
         println!(
-            "# tokenizer=CharBpeTokenizer train_tokens={}, val_tokens={}, val_chars={}, val_chars_per_token={:.4}",
+            "# tokenizer={:?} train_tokens={}, val_tokens={}, val_chars={}, val_chars_per_token={:.4}",
+            self.tcfg.tokenizer_kind,
             dataset.train.len(),
             dataset.val.len(),
             dataset.val_text_len_chars,

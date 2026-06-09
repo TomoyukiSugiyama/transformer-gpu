@@ -68,7 +68,7 @@ impl ModelConfig {
     /// tiny_shakespeare の設定
     pub fn tiny_shakespeare() -> Self {
         Self {
-            vocab_size: 4000,
+            vocab_size: 0, // CharBPE トークナイザで処理した後のサイズを設定
             d_model: 256,
             n_heads: 8,
             n_kv_heads: 8,

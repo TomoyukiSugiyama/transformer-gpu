@@ -1,19 +1,19 @@
 use rand::RngExt;
 use rand::rng;
 
-use crate::char_bpe_tokenizer::CharBpeTokenizer;
 use crate::checkpoint::Checkpointable;
 use crate::checkpoint::WeightMap;
 use crate::gpu_context::GpuContext;
 use crate::model::language_model::LanguageModel;
 use crate::model::language_model::LanguageModelForwardCache;
 use crate::model_config::ModelConfig;
+use crate::tokenizer::Tokenizer;
 
 pub fn infer(
     ctx: &GpuContext,
     model: &mut LanguageModel,
     cfg: &mut ModelConfig,
-    tokenizer: CharBpeTokenizer,
+    tokenizer: &Box<dyn Tokenizer>,
     prompts: &[&str],
     restore_ckpt: Option<&str>,
 ) {
@@ -40,7 +40,7 @@ pub fn infer(
             ctx,
             model,
             cfg,
-            &tokenizer,
+            tokenizer,
             prompt,
             max_new_token,
             top_k,
@@ -58,7 +58,7 @@ pub fn infer(
             ctx,
             model,
             cfg,
-            &tokenizer,
+            tokenizer,
             prompt,
             max_new_token,
             top_p,
@@ -77,7 +77,7 @@ pub fn generate_top_k(
     ctx: &GpuContext,
     model: &mut LanguageModel,
     cfg: &mut ModelConfig,
-    tokenizer: &CharBpeTokenizer,
+    tokenizer: &Box<dyn Tokenizer>,
     prompt: &str,
     max_new_token: usize,
     top_k: usize,
@@ -112,7 +112,7 @@ pub fn generate_top_p(
     ctx: &GpuContext,
     model: &mut LanguageModel,
     cfg: &mut ModelConfig,
-    tokenizer: &CharBpeTokenizer,
+    tokenizer: &Box<dyn Tokenizer>,
     prompt: &str,
     max_new_token: usize,
     top_p: f32,

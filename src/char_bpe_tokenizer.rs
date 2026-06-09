@@ -1,19 +1,8 @@
 use std::collections::HashMap;
 
+use crate::tokenizer::{Tokenizer, TokenizerKind};
+
 /// Unicode char-level BPE トークナイザ。
-///
-/// 既存の `BpeTokenizer` (byte-level) との違い:
-///   - **初期トークン単位 = char (Unicode コードポイント)**。
-///     - 日本語 1 文字 = 1 token として開始するため、 マージが UTF-8 境界を跨がない (= 文字化けしない)。
-///     - byte-level は 1 char = 3 byte でマージが境界を跨ぐ可能性があった。
-///   - **encode/decode が完全に lossless**:
-///     - 空白 (ASCII space, 全角 space, tab 等) と改行も独立トークンとして保持する。
-///     - decode は token を順次連結するだけ (BPE byte-level は decode 時に
-///       単語間にスペースを挿入する heuristic を持つため日本語では誤動作する)。
-///   - **大文字小文字を保持**: 日本語コーパスに混在する英字を区別なく扱うと辞書がぶれるため。
-///   - **`</w>` 単語末尾マーカーを採用しない**: 日本語は空白で語を区切らないため
-///     word-final char と mid-word char を区別する旨味が薄い。
-///     初期 vocab を半分に圧縮できる (5,200 → 5,200)。 SentencePiece 系と同じ思想。
 ///
 /// vocab レイアウト:
 ///   - id 0..=3: `<PAD>` `<UNK>` `<BOS>` `<EOS>`
@@ -320,7 +309,7 @@ impl CharBpeTokenizer {
     ///
     /// コーパス側で `<BOS>` `<EOS>` を special token として埋めている場合 (作品単位
     /// での境界付与) を考慮し、 既に先頭が BOS / 末尾が EOS であれば二重付与しない。
-    pub fn encode_long(&self, text: &str) -> Vec<usize> {
+    fn encode_long(&self, text: &str) -> Vec<usize> {
         let inner = self.encode_inner(text);
         let mut ids = if inner.first().copied() == Some(self.bos_id()) {
             Vec::with_capacity(inner.len() + 1)
@@ -337,7 +326,7 @@ impl CharBpeTokenizer {
     }
 
     /// 推論プロンプト用: 先頭に BOS のみ付与する。
-    pub fn encode_prompt(&self, text: &str) -> Vec<usize> {
+    fn encode_prompt(&self, text: &str) -> Vec<usize> {
         let mut ids = vec![self.bos_id()];
         ids.extend(self.encode_inner(text));
         ids
@@ -347,7 +336,7 @@ impl CharBpeTokenizer {
     /// 特殊トークン (PAD/UNK/BOS/EOS) はスキップする。
     /// 空白・改行・句読点は pretokenize で独立トークンとして保存されているため、
     /// decode 後に元のテキストが完全に復元される。
-    pub fn decode(&self, ids: &[usize]) -> String {
+    fn decode(&self, ids: &[usize]) -> String {
         let specials = [Self::PAD, Self::UNK, Self::BOS, Self::EOS];
         let mut out = String::new();
         for &id in ids {
@@ -362,11 +351,11 @@ impl CharBpeTokenizer {
         out
     }
 
-    pub fn vocab_size(&self) -> usize {
+    fn vocab_size(&self) -> usize {
         self.id_to_token.len()
     }
 
-    pub fn pad_id(&self) -> usize {
+    fn pad_id(&self) -> usize {
         *self.token_to_id.get(Self::PAD).unwrap_or(&0)
     }
 
@@ -374,7 +363,7 @@ impl CharBpeTokenizer {
         *self.token_to_id.get(Self::BOS).unwrap_or(&2)
     }
 
-    pub fn eos_id(&self) -> usize {
+    fn eos_id(&self) -> usize {
         *self.token_to_id.get(Self::EOS).unwrap_or(&3)
     }
 
@@ -386,6 +375,36 @@ impl CharBpeTokenizer {
             unk_id: 0,
             special_tokens: Vec::new(),
         }
+    }
+}
+
+impl Tokenizer for CharBpeTokenizer {
+    fn vocab_size(&self) -> usize {
+        CharBpeTokenizer::vocab_size(self)
+    }
+
+    fn pad_id(&self) -> usize {
+        CharBpeTokenizer::pad_id(self)
+    }
+
+    fn eos_id(&self) -> usize {
+        CharBpeTokenizer::eos_id(self)
+    }
+
+    fn encode_long(&self, text: &str) -> Vec<usize> {
+        CharBpeTokenizer::encode_long(self, text)
+    }
+
+    fn encode_prompt(&self, text: &str) -> Vec<usize> {
+        CharBpeTokenizer::encode_prompt(self, text)
+    }
+
+    fn decode(&self, ids: &[usize]) -> String {
+        CharBpeTokenizer::decode(self, ids)
+    }
+
+    fn kind(&self) -> TokenizerKind {
+        TokenizerKind::CharBpe
     }
 }
 
