@@ -1,3 +1,4 @@
+pub mod bpe_tokenizer;
 pub mod char_bpe_tokenizer;
 pub mod char_tokenizer;
 pub mod checkpoint;

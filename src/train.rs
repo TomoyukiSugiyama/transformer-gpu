@@ -47,7 +47,7 @@ impl Default for TrainConfig {
             seed: 42,
             grad_clip: 1.0,
             lr_schedule_kind: LrScheduleKind::WarmupStableDecay { stable_steps: 3800 },
-            tokenizer_kind: TokenizerKind::CharBpe,
+            tokenizer_kind: TokenizerKind::Bpe,
             corpus: String::new(),
         }
     }
@@ -69,7 +69,7 @@ impl TrainConfig {
             seed: 42,
             grad_clip: 1.0,
             lr_schedule_kind: LrScheduleKind::WarmupStableDecay { stable_steps: 8000 },
-            tokenizer_kind: TokenizerKind::Char,
+            tokenizer_kind: TokenizerKind::Bpe,
             corpus: "corpus/tiny_shakespeare.txt".to_string(),
         }
     }
