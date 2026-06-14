@@ -7,7 +7,6 @@ const WORD_END: &str = "</w>";
 pub struct BpeTokenizer {
     id_to_token: Vec<String>,
     token_to_id: HashMap<String, usize>,
-    merges: Vec<(String, String)>,
     merge_rank: HashMap<(String, String), usize>,
     unk_id: usize,
 }
@@ -202,7 +201,6 @@ impl BpeTokenizer {
         Self {
             id_to_token,
             token_to_id,
-            merges,
             merge_rank,
             unk_id,
         }
@@ -338,7 +336,6 @@ impl BpeTokenizer {
         Self {
             id_to_token: Vec::new(),
             token_to_id: HashMap::new(),
-            merges: Vec::new(),
             merge_rank: HashMap::new(),
             unk_id: 0,
         }

@@ -1,6 +1,9 @@
 use std::io::{Error, ErrorKind, Result};
 
-use crate::{bpe_tokenizer::BpeTokenizer, char_bpe_tokenizer::CharBpeTokenizer, char_tokenizer::CharTokenizer};
+use crate::{
+    bpe_tokenizer::BpeTokenizer, char_bpe_tokenizer::CharBpeTokenizer,
+    char_tokenizer::CharTokenizer,
+};
 
 /// 学習・推論で使用するトークナイザの抽象。
 /// 実装は次の 3 種類:

@@ -50,16 +50,62 @@ pub struct LanguageModelBackward {
     pub d_lm_head: Vec<f32>,
 }
 
+impl LanguageModelBackward {
+    pub fn add_assign(&mut self, other: &Self) {
+        for (a, b) in self.d_embedding.iter_mut().zip(&other.d_embedding) {
+            *a += b;
+        }
+        for (a, b) in self.d_final_gamma.iter_mut().zip(&other.d_final_gamma) {
+            *a += b;
+        }
+        for (a, b) in self.d_lm_head.iter_mut().zip(&other.d_lm_head) {
+            *a += b;
+        }
+        for (bg, bo) in self.d_blocks.iter_mut().zip(&other.d_blocks) {
+            for (a, b) in bg.d_gamma_1.iter_mut().zip(&bo.d_gamma_1) {
+                *a += b;
+            }
+            for (a, b) in bg.d_gamma_2.iter_mut().zip(&bo.d_gamma_2) {
+                *a += b;
+            }
+            let (ag, ab) = (&mut bg.attn_backward, &bo.attn_backward);
+            for (a, b) in ag.dw_q.iter_mut().zip(&ab.dw_q) {
+                *a += b;
+            }
+            for (a, b) in ag.dw_k.iter_mut().zip(&ab.dw_k) {
+                *a += b;
+            }
+            for (a, b) in ag.dw_v.iter_mut().zip(&ab.dw_v) {
+                *a += b;
+            }
+            for (a, b) in ag.dw_o.iter_mut().zip(&ab.dw_o) {
+                *a += b;
+            }
+            let (fg, fb) = (&mut bg.ffn_backward, &bo.ffn_backward);
+            for (a, b) in fg.dw_gate.iter_mut().zip(&fb.dw_gate) {
+                *a += b;
+            }
+            for (a, b) in fg.dw_up.iter_mut().zip(&fb.dw_up) {
+                *a += b;
+            }
+            for (a, b) in fg.dw_down.iter_mut().zip(&fb.dw_down) {
+                *a += b;
+            }
+        }
+    }
+}
+
 impl LanguageModel {
     pub fn new(cfg: &ModelConfig) -> Self {
         let scale = (1.0 / cfg.d_model as f32).sqrt();
+        let lm_scale = (1.0 / cfg.d_ff as f32).sqrt();
         Self {
             embedding: random_f32(cfg.vocab_size * cfg.d_model, 10, scale),
             blocks: (0..cfg.n_layers)
                 .map(|_| TransformerBlock::new(cfg))
                 .collect(),
             final_gamma: random_f32(cfg.d_model, 11, scale),
-            lm_head: random_f32(cfg.d_model * cfg.vocab_size, 12, scale),
+            lm_head: random_f32(cfg.d_model * cfg.vocab_size, 12, lm_scale),
         }
     }
 

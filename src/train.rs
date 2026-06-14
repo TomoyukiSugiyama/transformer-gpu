@@ -6,7 +6,7 @@ use crate::{
     gpu_context::GpuContext,
     kernel::{adam_w::AdamW, cross_entropy_loss::cross_entropy_loss},
     lr_scheduler::{LrScheduleKind, LrScheduler},
-    model::language_model::{LanguageModel, LanguageModelForwardCache},
+    model::language_model::{LanguageModel, LanguageModelBackward, LanguageModelForwardCache},
     model_config::ModelConfig,
     tokenizer::TokenizerKind,
 };
@@ -14,6 +14,7 @@ use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
 pub struct TrainConfig {
+    pub batch_size: usize,
     pub eval_interval: usize,
     pub eval_batches: usize,
     pub seq_len: usize,
@@ -34,6 +35,7 @@ pub struct TrainConfig {
 impl Default for TrainConfig {
     fn default() -> Self {
         Self {
+            batch_size: 1,
             eval_interval: 500,
             eval_batches: 20,
             seq_len: 128,
@@ -56,6 +58,7 @@ impl Default for TrainConfig {
 impl TrainConfig {
     pub fn tiny_shakespeare() -> Self {
         Self {
+            batch_size: 16,
             eval_interval: 500,
             eval_batches: 20,
             seq_len: 128,
@@ -86,15 +89,14 @@ impl Trainer {
         Self { opt, tcfg }
     }
 
-    pub fn train_step(
-        &mut self,
+    pub fn compute_grads(
+        &self,
         ctx: &GpuContext,
-        model: &mut LanguageModel,
+        model: &LanguageModel,
         cfg: &ModelConfig,
         cache: &mut LanguageModelForwardCache,
         input_ids: &[u32],
-        lr: f32,
-    ) -> f32 {
+    ) -> Option<(f32, LanguageModelBackward)> {
         let seq = input_ids.len() - 1;
         let input = &input_ids[..seq];
         let target: Vec<usize> = input_ids[1..].iter().map(|&t| t as usize).collect();
@@ -103,12 +105,19 @@ impl Trainer {
         let (loss, d_logits) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
 
         if !loss.is_finite() {
-            return loss;
+            return None;
         }
 
         let grads = model.backward(ctx, cfg, &d_logits, cache);
+        Some((loss, grads))
+    }
 
-        // --- AdamW step ---
+    pub fn apply_grads(
+        &mut self,
+        model: &mut LanguageModel,
+        grads: &LanguageModelBackward,
+        lr: f32,
+    ) {
         self.opt.set_lr(lr);
         self.opt.increment_step();
 
@@ -146,8 +155,6 @@ impl Trainer {
             self.opt
                 .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
         }
-
-        loss
     }
 
     pub fn compute_val_loss(
@@ -235,12 +242,13 @@ impl Trainer {
             cfg.dropout_p,
         );
         println!(
-            "# lr_schedule={:?}, lr_max={}, lr_min={}, warmup_steps={}, end_step={}",
+            "# lr_schedule={:?}, lr_max={}, lr_min={}, warmup_steps={}, end_step={}, batch_size={}",
             self.tcfg.lr_schedule_kind,
             self.tcfg.lr_max,
             self.tcfg.lr_min,
             self.tcfg.warmup_steps,
             self.tcfg.end_step,
+            self.tcfg.batch_size
         );
         println!(
             "# tokenizer={:?} train_tokens={}, val_tokens={}, val_chars={}, val_chars_per_token={:.4}",
@@ -259,17 +267,42 @@ impl Trainer {
         println!("step,loss,ema,ppl,ema_ppl,lr,ms_per_step,elapsed_s");
         let train_start = Instant::now();
         let mut window_start = Instant::now();
-
         for step in start_step..=self.tcfg.end_step {
-            let window = dataset.sample_window(Split::Train, self.tcfg.seq_len, &mut rng);
             let lr = lr_scheduler.get_lr(step);
-            let loss = self.train_step(ctx, model, cfg, &mut cache, &window, lr);
 
+            let mut total_loss = 0.0f32;
+            let mut accum_grads: Option<LanguageModelBackward> = None;
+
+            let mut valid_count = 0usize;
+            for _ in 0..self.tcfg.batch_size {
+                let window = dataset.sample_window(Split::Train, self.tcfg.seq_len, &mut rng);
+                let Some((loss, grads)) = self.compute_grads(ctx, model, cfg, &mut cache, &window)
+                else {
+                    accum_grads = None;
+                    break;
+                };
+
+                total_loss += loss;
+                valid_count += 1;
+                match accum_grads.as_mut() {
+                    Some(ag) => ag.add_assign(&grads),
+                    None => accum_grads = Some(grads),
+                }
+            }
+
+            if let Some(grads) = accum_grads {
+                // grad_scale = 1/valid_count、apply_grads 内の AdamW に反映
+                self.opt.set_grad_scale(valid_count);
+                self.apply_grads(model, &grads, lr);
+            }
+            self.opt.reset_grad_scale();
+
+            let avg_loss = total_loss / self.tcfg.batch_size as f32;
             // ema_loss = alpha * ema_loss + (1 - alpha) * loss
             let alpha = 0.05;
             ema_loss = Some(match ema_loss {
-                Some(e) => e * (1.0 - alpha) + loss * alpha,
-                None => loss,
+                Some(e) => e * (1.0 - alpha) + avg_loss * alpha,
+                None => avg_loss,
             });
 
             if step % self.tcfg.log_interval == 0 {
@@ -279,8 +312,8 @@ impl Trainer {
                 let elapsed_s = train_start.elapsed().as_secs_f64();
                 let ema = ema_loss.unwrap();
                 println!(
-                    "{step},{loss:.4},{ema:.4},{:.4},{:.4},{lr:.3e},{ms_per_step:.1},{elapsed_s:.1}",
-                    loss.exp(),
+                    "{step},{avg_loss:.4},{ema:.4},{:.4},{:.4},{lr:.3e},{ms_per_step:.1},{elapsed_s:.1}",
+                    avg_loss.exp(),
                     ema.exp()
                 );
                 let _ = std::io::stdout().flush();
@@ -362,32 +395,56 @@ mod tests {
 
         let input: Vec<u32> = (0u32..8).map(|i| i % 10).collect();
 
-        let loss_before = trainer.train_step(
-            &ctx,
-            &mut model,
-            &cfg,
-            &mut cache,
-            &input,
-            lr_scheduler.get_lr(0),
-        );
-        for step in 2..20 {
-            trainer.train_step(
-                &ctx,
-                &mut model,
-                &cfg,
-                &mut cache,
-                &input,
-                lr_scheduler.get_lr(step),
-            );
+        let mut loss_before = 0.0f32;
+        let mut accum_grads_before: Option<LanguageModelBackward> = None;
+        if let Some((loss, grads)) = trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &input) {
+            loss_before = loss;
+            match accum_grads_before.as_mut() {
+                Some(ag) => ag.add_assign(&grads),
+                None => accum_grads_before = Some(grads),
+            }
         }
-        let loss_after = trainer.train_step(
-            &ctx,
-            &mut model,
-            &cfg,
-            &mut cache,
-            &input,
-            lr_scheduler.get_lr(20),
-        );
+        trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
+        if let Some(grads) = accum_grads_before {
+            trainer.apply_grads(&mut model, &grads, lr_scheduler.get_lr(0));
+        }
+        trainer.opt.reset_grad_scale();
+
+        for step in 2..20 {
+            let lr = lr_scheduler.get_lr(step);
+
+            let mut accum_grads: Option<LanguageModelBackward> = None;
+
+            if let Some((_, grads)) = trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &input)
+            {
+                match accum_grads.as_mut() {
+                    Some(ag) => ag.add_assign(&grads),
+                    None => accum_grads = Some(grads),
+                }
+            }
+
+            // grad_scale = 1/batch_size、apply_grads 内の AdamW に反映
+            trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
+            if let Some(grads) = accum_grads {
+                trainer.apply_grads(&mut model, &grads, lr);
+            }
+            trainer.opt.reset_grad_scale();
+        }
+
+        let mut loss_after = 0.0f32;
+        let mut accum_grads_after: Option<LanguageModelBackward> = None;
+        if let Some((loss, grads)) = trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &input) {
+            loss_after = loss;
+            match accum_grads_after.as_mut() {
+                Some(ag) => ag.add_assign(&grads),
+                None => accum_grads_after = Some(grads),
+            }
+        }
+        trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
+        if let Some(grads) = accum_grads_after {
+            trainer.apply_grads(&mut model, &grads, lr_scheduler.get_lr(0));
+        }
+        trainer.opt.reset_grad_scale();
 
         assert!(
             loss_after < loss_before,
