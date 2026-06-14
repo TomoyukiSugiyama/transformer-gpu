@@ -242,13 +242,14 @@ impl Trainer {
             cfg.dropout_p,
         );
         println!(
-            "# lr_schedule={:?}, lr_max={}, lr_min={}, warmup_steps={}, end_step={}, batch_size={}",
+            "# lr_schedule={:?}, lr_max={}, lr_min={}, warmup_steps={}, end_step={}, batch_size={}, grad_clip={}",
             self.tcfg.lr_schedule_kind,
             self.tcfg.lr_max,
             self.tcfg.lr_min,
             self.tcfg.warmup_steps,
             self.tcfg.end_step,
-            self.tcfg.batch_size
+            self.tcfg.batch_size,
+            self.tcfg.grad_clip
         );
         println!(
             "# tokenizer={:?} train_tokens={}, val_tokens={}, val_chars={}, val_chars_per_token={:.4}",
@@ -290,17 +291,18 @@ impl Trainer {
                 }
             }
 
-            if let Some(grads) = accum_grads {
+            if let Some(mut grads) = accum_grads {
+                let scale = 1.0 / valid_count as f32;
+                grads.scale(scale);
+                let clipped_grads = self.clip_grads(grads, self.tcfg.grad_clip);
                 // grad_scale = 1/valid_count、apply_grads 内の AdamW に反映
                 self.opt.set_grad_scale(valid_count);
-
-                let clipped_grads = self.clip_grads(grads, self.tcfg.grad_clip);
 
                 self.apply_grads(model, &clipped_grads, lr);
             }
             self.opt.reset_grad_scale();
 
-            let avg_loss = total_loss / self.tcfg.batch_size as f32;
+            let avg_loss = total_loss / valid_count as f32;
             // ema_loss = alpha * ema_loss + (1 - alpha) * loss
             let alpha = 0.05;
             ema_loss = Some(match ema_loss {

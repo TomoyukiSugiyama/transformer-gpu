@@ -51,6 +51,47 @@ pub struct LanguageModelBackward {
 }
 
 impl LanguageModelBackward {
+    pub fn scale(&mut self, s: f32) {
+        for v in self.d_embedding.iter_mut() {
+            *v *= s;
+        }
+        for v in self.d_final_gamma.iter_mut() {
+            *v *= s;
+        }
+        for v in self.d_lm_head.iter_mut() {
+            *v *= s;
+        }
+        for b in self.d_blocks.iter_mut() {
+            for v in b.d_gamma_1.iter_mut() {
+                *v *= s;
+            }
+            for v in b.d_gamma_2.iter_mut() {
+                *v *= s;
+            }
+            for v in b.attn_backward.dw_q.iter_mut() {
+                *v *= s;
+            }
+            for v in b.attn_backward.dw_k.iter_mut() {
+                *v *= s;
+            }
+            for v in b.attn_backward.dw_v.iter_mut() {
+                *v *= s;
+            }
+            for v in b.attn_backward.dw_o.iter_mut() {
+                *v *= s;
+            }
+            for v in b.ffn_backward.dw_gate.iter_mut() {
+                *v *= s;
+            }
+            for v in b.ffn_backward.dw_up.iter_mut() {
+                *v *= s;
+            }
+            for v in b.ffn_backward.dw_down.iter_mut() {
+                *v *= s;
+            }
+        }
+    }
+
     pub fn add_assign(&mut self, other: &Self) {
         for (a, b) in self.d_embedding.iter_mut().zip(&other.d_embedding) {
             *a += b;
