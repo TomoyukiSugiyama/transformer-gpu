@@ -293,7 +293,10 @@ impl Trainer {
             if let Some(grads) = accum_grads {
                 // grad_scale = 1/valid_count、apply_grads 内の AdamW に反映
                 self.opt.set_grad_scale(valid_count);
-                self.apply_grads(model, &grads, lr);
+
+                let clipped_grads = self.clip_grads(grads, self.tcfg.grad_clip);
+
+                self.apply_grads(model, &clipped_grads, lr);
             }
             self.opt.reset_grad_scale();
 
@@ -351,6 +354,61 @@ impl Trainer {
                 }
             }
         }
+    }
+
+    fn clip_grads(&self, mut grads: LanguageModelBackward, max_norm: f32) -> LanguageModelBackward {
+        // 全パラメータの global norm を計算
+        let sum_sq: f32 = [
+            grads.d_embedding.as_slice(),
+            grads.d_final_gamma.as_slice(),
+            grads.d_lm_head.as_slice(),
+        ]
+        .iter()
+        .copied()
+        .chain(grads.d_blocks.iter().flat_map(|b| {
+            [
+                b.d_gamma_1.as_slice(),
+                b.d_gamma_2.as_slice(),
+                b.attn_backward.dw_q.as_slice(),
+                b.attn_backward.dw_k.as_slice(),
+                b.attn_backward.dw_v.as_slice(),
+                b.attn_backward.dw_o.as_slice(),
+                b.ffn_backward.dw_gate.as_slice(),
+                b.ffn_backward.dw_up.as_slice(),
+                b.ffn_backward.dw_down.as_slice(),
+            ]
+        }))
+        .flat_map(|s| s.iter())
+        .map(|v| v.powi(2))
+        .sum();
+
+        let global_norm = sum_sq.sqrt();
+
+        if global_norm <= max_norm {
+            return grads; // クリップ不要
+        }
+
+        let scale = max_norm / global_norm;
+
+        // 全テンソルに同じ scale を適用
+        let clip = |v: &mut Vec<f32>| v.iter_mut().for_each(|x| *x *= scale);
+
+        clip(&mut grads.d_embedding);
+        clip(&mut grads.d_final_gamma);
+        clip(&mut grads.d_lm_head);
+        for b in grads.d_blocks.iter_mut() {
+            clip(&mut b.d_gamma_1);
+            clip(&mut b.d_gamma_2);
+            clip(&mut b.attn_backward.dw_q);
+            clip(&mut b.attn_backward.dw_k);
+            clip(&mut b.attn_backward.dw_v);
+            clip(&mut b.attn_backward.dw_o);
+            clip(&mut b.ffn_backward.dw_gate);
+            clip(&mut b.ffn_backward.dw_up);
+            clip(&mut b.ffn_backward.dw_down);
+        }
+
+        grads
     }
 }
 
