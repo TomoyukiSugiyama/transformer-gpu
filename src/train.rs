@@ -242,7 +242,7 @@ impl Trainer {
             cfg.dropout_p,
         );
         println!(
-            "# lr_schedule={:?}, lr_max={}, lr_min={}, warmup_steps={}, end_step={}, batch_size={}, grad_clip={}",
+            "# lr_schedule={:?}, lr_max={}, lr_min={}, warmup_steps={}, end_step={}, batch_size={}, grad_clip={:.2}",
             self.tcfg.lr_schedule_kind,
             self.tcfg.lr_max,
             self.tcfg.lr_min,
