@@ -229,7 +229,7 @@ impl Trainer {
                 let delta = tensor_stats(&update);
                 let w_after = tensor_stats(&block.ffn.w_down);
 
-                eprintln!(
+                println!(
                     concat!(
                         "step={} b={} w_down ",
                         "w_rms={:.4e}->{:.4e} ",
@@ -273,14 +273,14 @@ impl Trainer {
             //     .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
         }
 
-        for (i, block) in model.blocks.iter().enumerate() {
-            let norm = block.ffn.w_down.iter().map(|v| v * v).sum::<f32>().sqrt();
-            let norm_up = block.ffn.w_up.iter().map(|v| v * v).sum::<f32>().sqrt();
-            let norm_gate = block.ffn.w_gate.iter().map(|v| v * v).sum::<f32>().sqrt();
-            eprintln!(
-                "b{i}:w_down_norm={norm:.6} w_up_norm={norm_up:.6} w_gate_norm={norm_gate:.6}"
-            );
-        }
+        // for (i, block) in model.blocks.iter().enumerate() {
+        //     let norm = block.ffn.w_down.iter().map(|v| v * v).sum::<f32>().sqrt();
+        //     let norm_up = block.ffn.w_up.iter().map(|v| v * v).sum::<f32>().sqrt();
+        //     let norm_gate = block.ffn.w_gate.iter().map(|v| v * v).sum::<f32>().sqrt();
+        //     println!(
+        //         "b{i}:w_down_norm={norm:.6} w_up_norm={norm_up:.6} w_gate_norm={norm_gate:.6}"
+        //     );
+        // }
     }
 
     pub fn compute_val_loss(

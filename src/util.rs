@@ -61,12 +61,20 @@ pub fn concat_columns_into(
 }
 
 pub fn finite_slice(name: &str, xs: &[f32]) -> bool {
+    if xs.is_empty() {
+        println!("{name}: empty tensor");
+        return true;
+    }
+
     let s = tensor_stats(xs);
 
     if s.non_finite > 0 {
-        eprintln!(
-            "{name}: NaN/Inf count={}, rms={:.4e}, max_abs={:.4e}",
-            s.non_finite, s.rms, s.max_abs,
+        println!(
+            "{name}: NaN/Inf count={} len={} rms={:.4e} max_abs={:.4e}",
+            s.non_finite,
+            s.len,
+            s.rms,
+            s.max_abs,
         );
         return false;
     }
@@ -87,10 +95,18 @@ pub struct TensorStats {
     pub rms: f32,
     pub max_abs: f32,
     pub non_finite: usize,
+    pub len: usize,
 }
 
 pub fn tensor_stats(xs: &[f32]) -> TensorStats {
-    assert!(!xs.is_empty());
+    if xs.is_empty() {
+        return TensorStats {
+            rms: 0.0,
+            max_abs: 0.0,
+            non_finite: 0,
+            len: 0,
+        };
+    }
 
     let mut sum_sq = 0.0f64;
     let mut max_abs = 0.0f32;
@@ -110,6 +126,7 @@ pub fn tensor_stats(xs: &[f32]) -> TensorStats {
         rms: (sum_sq / xs.len() as f64).sqrt() as f32,
         max_abs,
         non_finite,
+        len: xs.len(),
     }
 }
 

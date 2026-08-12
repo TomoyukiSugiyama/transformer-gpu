@@ -208,10 +208,10 @@ impl TransformerBlock {
             cfg.d_model as u32,
         );
 
-        let x_in_rms = (cache.x_in.iter().map(|v| v * v).sum::<f32>() / cfg.d_model as f32).sqrt();
-        if x_in_rms > 10.0 {
-            eprintln!("bwd:rms_norm1_bwd:x_in_rms: {x_in_rms:.4}");
-        }
+        // let x_in_rms = (cache.x_in.iter().map(|v| v * v).sum::<f32>() / cfg.d_model as f32).sqrt();
+        // if x_in_rms > 10.0 {
+        //     eprintln!("bwd:rms_norm1_bwd:x_in_rms: {x_in_rms:.4}");
+        // }
 
         finite_slice(
             "transformer_block:backward:rms_norm1_bwd:input:dy",

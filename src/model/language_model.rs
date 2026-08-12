@@ -176,11 +176,10 @@ impl LanguageModel {
                 finite_slice(&format!("fwd:block{i}:ffn_out"), &cache.ffn_out);
             });
 
-        finite_slice("fwd:final_norm_in", &cache.final_norm_in);
-        finite_slice("fwd:final_norm_out", &cache.final_norm_out);
-        finite_slice("fwd:logits", &cache.logits);
         cache.final_norm_in = x.clone();
+        finite_slice("fwd:final_norm_in", &cache.final_norm_in);
         cache.final_norm_out = rms_norm(ctx, &x, &self.final_gamma, cfg.eps, cfg.d_model as u32);
+        finite_slice("fwd:final_norm_out", &cache.final_norm_out);
 
         cache.logits = matmul_forward(
             ctx,
@@ -190,6 +189,7 @@ impl LanguageModel {
             cfg.d_model as u32,
             cfg.vocab_size as u32,
         );
+        finite_slice("fwd:logits", &cache.logits);
 
         cache.logits.clone()
     }
