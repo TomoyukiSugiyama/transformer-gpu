@@ -554,6 +554,22 @@ mod test {
     }
 
     #[test]
+    fn test_rms_norm_backward_d256() {
+        let seq = 4usize;
+        let d_model = 256usize;
+        let len = seq * d_model;
+        let scale = 0.1f32;
+        let dy = random_f32(len, 41, scale);
+        let gamma: Vec<f32> = vec![1.0; d_model];
+        let eps = 1e-6;
+        let x = random_f32(len, 42, scale);
+        let (cpu_dx, cpu_dgamma) = rms_norm_backward_cpu(&dy, &x, &gamma, eps, d_model);
+        let ctx = GpuContext::new();
+        let (gpu_dx, gpu_dgamma) = rms_norm_backward(&ctx, &dy, &x, &gamma, eps, d_model as u32);
+        assert_close(&gpu_dx, &cpu_dx, 1e-4, 1e-5);
+        assert_close(&gpu_dgamma, &cpu_dgamma, 1e-4, 1e-5);
+    }
+    #[test]
     fn test_rms_norm_backward_d512() {
         let seq = 4usize;
         let d_model = 512usize;

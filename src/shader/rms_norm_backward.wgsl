@@ -82,6 +82,7 @@ fn rms_norm_backward(
         stride_dot /= 2u;
     }
 
+    workgroupBarrier();
     let dot = tile[0] / f32(d_model);
 
     var k = lid.x;
