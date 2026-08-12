@@ -9,7 +9,7 @@ use crate::{
     model::language_model::{LanguageModel, LanguageModelBackward, LanguageModelForwardCache},
     model_config::ModelConfig,
     tokenizer::TokenizerKind,
-    util::finite_slice,
+    util::{finite_slice, require_finite, tensor_stats},
 };
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
@@ -120,7 +120,6 @@ impl Trainer {
         );
 
         for (i, block) in grads.d_blocks.iter().enumerate() {
-
             finite_slice(
                 &format!("train:compute_grads:forward:grads:d_blocks{i}:dx"),
                 &block.dx,
@@ -193,16 +192,17 @@ impl Trainer {
         model: &mut LanguageModel,
         grads: &LanguageModelBackward,
         lr: f32,
+        step: usize,
     ) {
         self.opt.set_lr(lr);
         self.opt.increment_step();
 
-        self.opt
-            .step("embedding", &mut model.embedding, &grads.d_embedding);
-        self.opt
-            .step("final_gamma", &mut model.final_gamma, &grads.d_final_gamma);
-        self.opt
-            .step("lm_head", &mut model.lm_head, &grads.d_lm_head);
+        // self.opt
+        //     .step("embedding", &mut model.embedding, &grads.d_embedding);
+        // self.opt
+        //     .step("final_gamma", &mut model.final_gamma, &grads.d_final_gamma);
+        // self.opt
+        //     .step("lm_head", &mut model.lm_head, &grads.d_lm_head);
 
         for (i, (block, bwd)) in model
             .blocks
@@ -210,33 +210,76 @@ impl Trainer {
             .zip(grads.d_blocks.iter())
             .enumerate()
         {
-            self.opt
-                .step(&format!("b{i}.gamma_1"), &mut block.gamma_1, &bwd.d_gamma_1);
-            self.opt
-                .step(&format!("b{i}.gamma_2"), &mut block.gamma_2, &bwd.d_gamma_2);
-            let ab = &bwd.attn_backward;
-            self.opt
-                .step(&format!("b{i}.wq"), &mut block.attn.w_q, &ab.dw_q);
-            self.opt
-                .step(&format!("b{i}.wk"), &mut block.attn.w_k, &ab.dw_k);
-            self.opt
-                .step(&format!("b{i}.wv"), &mut block.attn.w_v, &ab.dw_v);
-            self.opt
-                .step(&format!("b{i}.wo"), &mut block.attn.w_o, &ab.dw_o);
             let fb = &bwd.ffn_backward;
-            self.opt
-                .step(&format!("b{i}.w_gate"), &mut block.ffn.w_gate, &fb.dw_gate);
-            self.opt
-                .step(&format!("b{i}.w_up"), &mut block.ffn.w_up, &fb.dw_up);
+            let before_w_down = block.ffn.w_down.clone();
             self.opt
                 .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
+
+            if step % 20 == 0 {
+                let update: Vec<f32> = block
+                    .ffn
+                    .w_down
+                    .iter()
+                    .zip(before_w_down.iter())
+                    .map(|(&after, &before)| after - before)
+                    .collect();
+
+                let w_before = tensor_stats(&before_w_down);
+                let grad = tensor_stats(&fb.dw_down);
+                let delta = tensor_stats(&update);
+                let w_after = tensor_stats(&block.ffn.w_down);
+
+                eprintln!(
+                    concat!(
+                        "step={} b={} w_down ",
+                        "w_rms={:.4e}->{:.4e} ",
+                        "w_max={:.4e}->{:.4e} ",
+                        "g_rms={:.4e} g_max={:.4e} ",
+                        "delta_rms={:.4e} delta_max={:.4e}"
+                    ),
+                    step,
+                    i,
+                    w_before.rms,
+                    w_after.rms,
+                    w_before.max_abs,
+                    w_after.max_abs,
+                    grad.rms,
+                    grad.max_abs,
+                    delta.rms,
+                    delta.max_abs,
+                );
+            }
+
+            require_finite(&format!("b{i}.w_down"), &block.ffn.w_down);
+            // self.opt
+            //     .step(&format!("b{i}.gamma_1"), &mut block.gamma_1, &bwd.d_gamma_1);
+            // self.opt
+            //     .step(&format!("b{i}.gamma_2"), &mut block.gamma_2, &bwd.d_gamma_2);
+            // let ab = &bwd.attn_backward;
+            // self.opt
+            //     .step(&format!("b{i}.wq"), &mut block.attn.w_q, &ab.dw_q);
+            // self.opt
+            //     .step(&format!("b{i}.wk"), &mut block.attn.w_k, &ab.dw_k);
+            // self.opt
+            //     .step(&format!("b{i}.wv"), &mut block.attn.w_v, &ab.dw_v);
+            // self.opt
+            //     .step(&format!("b{i}.wo"), &mut block.attn.w_o, &ab.dw_o);
+            // let fb = &bwd.ffn_backward;
+            // self.opt
+            //     .step(&format!("b{i}.w_gate"), &mut block.ffn.w_gate, &fb.dw_gate);
+            // self.opt
+            //     .step(&format!("b{i}.w_up"), &mut block.ffn.w_up, &fb.dw_up);
+            // self.opt
+            //     .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
         }
 
         for (i, block) in model.blocks.iter().enumerate() {
-            let norm = block.ffn.w_down.iter().map(|v| v*v).sum::<f32>().sqrt();
-            let norm_up = block.ffn.w_up.iter().map(|v| v*v).sum::<f32>().sqrt();
-            let norm_gate = block.ffn.w_gate.iter().map(|v| v*v).sum::<f32>().sqrt();
-            eprintln!("b{i}:w_down_norm={norm:.6} w_up_norm={norm_up:.6} w_gate_norm={norm_gate:.6}");
+            let norm = block.ffn.w_down.iter().map(|v| v * v).sum::<f32>().sqrt();
+            let norm_up = block.ffn.w_up.iter().map(|v| v * v).sum::<f32>().sqrt();
+            let norm_gate = block.ffn.w_gate.iter().map(|v| v * v).sum::<f32>().sqrt();
+            eprintln!(
+                "b{i}:w_down_norm={norm:.6} w_up_norm={norm_up:.6} w_gate_norm={norm_gate:.6}"
+            );
         }
     }
 
@@ -381,7 +424,7 @@ impl Trainer {
                 // grad_scale = 1/valid_count、apply_grads 内の AdamW に反映
                 self.opt.set_grad_scale(valid_count);
 
-                self.apply_grads(model, &clipped_grads, lr);
+                self.apply_grads(model, &clipped_grads, lr, step);
             }
             self.opt.reset_grad_scale();
 
@@ -549,7 +592,7 @@ mod tests {
         }
         trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
         if let Some(grads) = accum_grads_before {
-            trainer.apply_grads(&mut model, &grads, lr_scheduler.get_lr(0));
+            trainer.apply_grads(&mut model, &grads, lr_scheduler.get_lr(0), 1);
         }
         trainer.opt.reset_grad_scale();
 
@@ -569,7 +612,7 @@ mod tests {
             // grad_scale = 1/batch_size、apply_grads 内の AdamW に反映
             trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
             if let Some(grads) = accum_grads {
-                trainer.apply_grads(&mut model, &grads, lr);
+                trainer.apply_grads(&mut model, &grads, lr, 1);
             }
             trainer.opt.reset_grad_scale();
         }
@@ -585,7 +628,7 @@ mod tests {
         }
         trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
         if let Some(grads) = accum_grads_after {
-            trainer.apply_grads(&mut model, &grads, lr_scheduler.get_lr(0));
+            trainer.apply_grads(&mut model, &grads, lr_scheduler.get_lr(0), 1);
         }
         trainer.opt.reset_grad_scale();
 

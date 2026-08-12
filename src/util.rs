@@ -61,20 +61,17 @@ pub fn concat_columns_into(
 }
 
 pub fn finite_slice(name: &str, xs: &[f32]) -> bool {
-    let mut ok = true;
-    for &x in xs {
-        if !x.is_finite() {
-            println!("{name} became NaN/Inf");
-            ok = false;
-            break;
-        }
-        if x.abs() > 1e1 {
-            println!("{name} overflow-ish: {x:e}");
-            ok = false;
-            break;
-        }
+    let s = tensor_stats(xs);
+
+    if s.non_finite > 0 {
+        eprintln!(
+            "{name}: NaN/Inf count={}, rms={:.4e}, max_abs={:.4e}",
+            s.non_finite, s.rms, s.max_abs,
+        );
+        return false;
     }
-    ok
+
+    true
 }
 
 use rand::rngs::StdRng;
@@ -83,6 +80,46 @@ use rand::{RngExt, SeedableRng};
 pub fn random_f32(len: usize, seed: u64, scale: f32) -> Vec<f32> {
     let mut rng = StdRng::seed_from_u64(seed);
     (0..len).map(|_| rng.random_range(-scale..scale)).collect()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TensorStats {
+    pub rms: f32,
+    pub max_abs: f32,
+    pub non_finite: usize,
+}
+
+pub fn tensor_stats(xs: &[f32]) -> TensorStats {
+    assert!(!xs.is_empty());
+
+    let mut sum_sq = 0.0f64;
+    let mut max_abs = 0.0f32;
+    let mut non_finite = 0usize;
+
+    for &x in xs {
+        if !x.is_finite() {
+            non_finite += 1;
+            continue;
+        }
+
+        sum_sq += (x as f64) * (x as f64);
+        max_abs = max_abs.max(x.abs());
+    }
+
+    TensorStats {
+        rms: (sum_sq / xs.len() as f64).sqrt() as f32,
+        max_abs,
+        non_finite,
+    }
+}
+
+pub fn require_finite(name: &str, xs: &[f32]) {
+    let s = tensor_stats(xs);
+    assert_eq!(
+        s.non_finite, 0,
+        "{name}: contains {} NaN/Inf values; rms={}, max_abs={}",
+        s.non_finite, s.rms, s.max_abs
+    );
 }
 
 #[cfg(test)]
