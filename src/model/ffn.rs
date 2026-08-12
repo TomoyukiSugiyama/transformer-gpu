@@ -369,4 +369,250 @@ mod test {
         assert_close(&gpu.dw_up, &cpu.dw_up, 1e-4, 1e-5);
         assert_close(&gpu.dw_down, &cpu.dw_down, 1e-4, 1e-5);
     }
+
+    #[test]
+    fn test_ffn_w_down_directional_derivative() {
+        let cfg = ModelConfig {
+            d_model: 8,
+            d_ff: 16,
+            n_layers: 1,
+            // テストで必要な残りを既存設定から埋める
+            ..Default::default()
+        };
+
+        let mut ffn = Ffn::new(&cfg);
+        let seq = 3usize;
+
+        let x = random_f32(seq * cfg.d_model, 1001, 0.1);
+        let dy = random_f32(seq * cfg.d_model, 1002, 0.1);
+
+        let mut cache = FfnForwardCache::default();
+        let _y = ffn.forward_cpu(&cfg, &x, &mut cache);
+        let bwd = ffn.backward_cpu(&cfg, &dy, &mut cache);
+
+        let mut v = random_f32(ffn.w_down.len(), 1003, 1.0);
+
+        let v_norm = v
+            .iter()
+            .map(|&x| (x as f64) * (x as f64))
+            .sum::<f64>()
+            .sqrt() as f32;
+
+        for x in &mut v {
+            *x /= v_norm;
+        }
+
+        let analytic: f32 = bwd.dw_down.iter().zip(v.iter()).map(|(&g, &d)| g * d).sum();
+
+        let eps = 1e-3f32;
+        let original = ffn.w_down.clone();
+
+        for (w, &d) in ffn.w_down.iter_mut().zip(v.iter()) {
+            *w += eps * d;
+        }
+        let mut plus_cache = FfnForwardCache::default();
+        let y_plus = ffn.forward_cpu(&cfg, &x, &mut plus_cache);
+        let loss_plus: f32 = y_plus.iter().zip(dy.iter()).map(|(&y, &g)| y * g).sum();
+
+        ffn.w_down.clone_from(&original);
+        for (w, &d) in ffn.w_down.iter_mut().zip(v.iter()) {
+            *w -= eps * d;
+        }
+        let mut minus_cache = FfnForwardCache::default();
+        let y_minus = ffn.forward_cpu(&cfg, &x, &mut minus_cache);
+        let loss_minus: f32 = y_minus.iter().zip(dy.iter()).map(|(&y, &g)| y * g).sum();
+
+        ffn.w_down.clone_from(&original);
+
+        let numerical = (loss_plus - loss_minus) / (2.0 * eps);
+
+        let abs_err = (analytic - numerical).abs();
+        let rel_err = abs_err / (analytic.abs() + numerical.abs() + 1e-6);
+
+        eprintln!(
+            "w_down directional derivative: \
+         analytic={analytic:.7e} \
+         numerical={numerical:.7e} \
+         abs_err={abs_err:.7e} \
+         rel_err={rel_err:.7e}",
+        );
+
+        assert!(
+            rel_err < 1e-3,
+            "w_down gradient mismatch: analytic={analytic}, numerical={numerical}, rel_err={rel_err}"
+        );
+    }
+
+    #[test]
+    fn test_ffn_w_down_directional_derivative_gpu() {
+        let cfg = ModelConfig {
+            d_model: 8,
+            d_ff: 16,
+            n_layers: 1,
+            // テストで必要な残りを既存設定から埋める
+            ..Default::default()
+        };
+
+        let mut ffn = Ffn::new(&cfg);
+        let seq = 3usize;
+
+        let x = random_f32(seq * cfg.d_model, 1001, 0.1);
+        let dy = random_f32(seq * cfg.d_model, 1002, 0.1);
+
+        // let mut cache = FfnForwardCache::default();
+        // let _y = ffn.forward_cpu(&cfg, &x, &mut cache);
+        // let bwd = ffn.backward_cpu(&cfg, &dy, &mut cache);
+
+        let mut v = random_f32(ffn.w_down.len(), 1003, 1.0);
+
+        let v_norm = v
+            .iter()
+            .map(|&x| (x as f64) * (x as f64))
+            .sum::<f64>()
+            .sqrt() as f32;
+
+        for x in &mut v {
+            *x /= v_norm;
+        }
+
+        let ctx = GpuContext::new();
+
+        let mut cache_gpu = FfnForwardCache::default();
+        let _ = ffn.forward(&ctx, &cfg, &x, &mut cache_gpu);
+        let gpu_bwd = ffn.backward(&ctx, &cfg, &dy, &mut cache_gpu);
+
+        let analytic: f32 = gpu_bwd
+            .dw_down
+            .iter()
+            .zip(v.iter())
+            .map(|(&g, &d)| g * d)
+            .sum();
+
+        // let analytic: f32 = bwd.dw_down.iter().zip(v.iter()).map(|(&g, &d)| g * d).sum();
+
+        let eps = 1e-3f32;
+        let original = ffn.w_down.clone();
+
+        for (w, &d) in ffn.w_down.iter_mut().zip(v.iter()) {
+            *w += eps * d;
+        }
+        let mut plus_cache = FfnForwardCache::default();
+        let y_plus = ffn.forward_cpu(&cfg, &x, &mut plus_cache);
+        let loss_plus: f32 = y_plus.iter().zip(dy.iter()).map(|(&y, &g)| y * g).sum();
+
+        ffn.w_down.clone_from(&original);
+        for (w, &d) in ffn.w_down.iter_mut().zip(v.iter()) {
+            *w -= eps * d;
+        }
+        let mut minus_cache = FfnForwardCache::default();
+        let y_minus = ffn.forward_cpu(&cfg, &x, &mut minus_cache);
+        let loss_minus: f32 = y_minus.iter().zip(dy.iter()).map(|(&y, &g)| y * g).sum();
+
+        ffn.w_down.clone_from(&original);
+
+        let numerical = (loss_plus - loss_minus) / (2.0 * eps);
+
+        let abs_err = (analytic - numerical).abs();
+        let rel_err = abs_err / (analytic.abs() + numerical.abs() + 1e-6);
+
+        eprintln!(
+            "w_down directional derivative: \
+         analytic={analytic:.7e} \
+         numerical={numerical:.7e} \
+         abs_err={abs_err:.7e} \
+         rel_err={rel_err:.7e}",
+        );
+
+        assert!(
+            rel_err < 1e-3,
+            "w_down gradient mismatch: analytic={analytic}, numerical={numerical}, rel_err={rel_err}"
+        );
+    }
+
+    #[test]
+    fn test_ffn_w_down_directional_derivative_gpu_d256() {
+        let cfg = ModelConfig {
+            d_model: 256,
+            d_ff: 1024,
+            n_layers: 1,
+            // テストで必要な残りを既存設定から埋める
+            ..Default::default()
+        };
+
+        let mut ffn = Ffn::new(&cfg);
+        let seq = 4usize;
+
+        let x = random_f32(seq * cfg.d_model, 1001, 0.1);
+        let dy = random_f32(seq * cfg.d_model, 1002, 0.1);
+
+        // let mut cache = FfnForwardCache::default();
+        // let _y = ffn.forward_cpu(&cfg, &x, &mut cache);
+        // let bwd = ffn.backward_cpu(&cfg, &dy, &mut cache);
+
+        let mut v = random_f32(ffn.w_down.len(), 1003, 1.0);
+
+        let v_norm = v
+            .iter()
+            .map(|&x| (x as f64) * (x as f64))
+            .sum::<f64>()
+            .sqrt() as f32;
+
+        for x in &mut v {
+            *x /= v_norm;
+        }
+
+        let ctx = GpuContext::new();
+
+        let mut cache_gpu = FfnForwardCache::default();
+        let _ = ffn.forward(&ctx, &cfg, &x, &mut cache_gpu);
+        let gpu_bwd = ffn.backward(&ctx, &cfg, &dy, &mut cache_gpu);
+
+        let analytic: f32 = gpu_bwd
+            .dw_down
+            .iter()
+            .zip(v.iter())
+            .map(|(&g, &d)| g * d)
+            .sum();
+
+        // let analytic: f32 = bwd.dw_down.iter().zip(v.iter()).map(|(&g, &d)| g * d).sum();
+
+        let eps = 1e-1_f32;
+        let original = ffn.w_down.clone();
+
+        for (w, &d) in ffn.w_down.iter_mut().zip(v.iter()) {
+            *w += eps * d;
+        }
+        let mut plus_cache = FfnForwardCache::default();
+        let y_plus = ffn.forward_cpu(&cfg, &x, &mut plus_cache);
+        let loss_plus: f32 = y_plus.iter().zip(dy.iter()).map(|(&y, &g)| y * g).sum();
+
+        ffn.w_down.clone_from(&original);
+        for (w, &d) in ffn.w_down.iter_mut().zip(v.iter()) {
+            *w -= eps * d;
+        }
+        let mut minus_cache = FfnForwardCache::default();
+        let y_minus = ffn.forward_cpu(&cfg, &x, &mut minus_cache);
+        let loss_minus: f32 = y_minus.iter().zip(dy.iter()).map(|(&y, &g)| y * g).sum();
+
+        ffn.w_down.clone_from(&original);
+
+        let numerical = (loss_plus - loss_minus) / (2.0 * eps);
+
+        let abs_err = (analytic - numerical).abs();
+        let rel_err = abs_err / (analytic.abs() + numerical.abs() + 1e-6);
+
+        eprintln!(
+            "w_down directional derivative: \
+         analytic={analytic:.7e} \
+         numerical={numerical:.7e} \
+         abs_err={abs_err:.7e} \
+         rel_err={rel_err:.7e}",
+        );
+
+        assert!(
+            rel_err < 1e-3,
+            "w_down gradient mismatch: analytic={analytic}, numerical={numerical}, rel_err={rel_err}"
+        );
+    }
+
 }

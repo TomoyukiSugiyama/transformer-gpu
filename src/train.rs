@@ -9,7 +9,7 @@ use crate::{
     model::language_model::{LanguageModel, LanguageModelBackward, LanguageModelForwardCache},
     model_config::ModelConfig,
     tokenizer::TokenizerKind,
-    util::{finite_slice, require_finite, tensor_stats},
+    util::{dot, finite_slice, l2_norm, mean_and_std, require_finite, tensor_stats},
 };
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
@@ -247,6 +247,30 @@ impl Trainer {
                     grad.max_abs,
                     delta.rms,
                     delta.max_abs,
+                );
+
+                let (mean_before, std_before) = mean_and_std(&before_w_down);
+                let (mean_after, std_after) = mean_and_std(&block.ffn.w_down);
+
+                println!(
+                    "step={step} b={i} w_down_distribution \
+                    mean={mean_before:.4e}->{mean_after:.4e} \
+                    std={std_before:.4e}->{std_after:.4e}"
+                );
+                let grad_dot_delta = dot(&fb.dw_down, &update);
+                let grad_norm = l2_norm(&fb.dw_down);
+                let delta_norm = l2_norm(&update);
+
+                let cosine = if grad_norm > 0.0 && delta_norm > 0.0 {
+                    grad_dot_delta / (grad_norm * delta_norm)
+                } else {
+                    0.0
+                };
+
+                println!(
+                    "step={step} b={i} w_down_direction \
+                    grad_dot_delta={grad_dot_delta:.4e} \
+                    cos_grad_delta={cosine:.6}"
                 );
             }
 

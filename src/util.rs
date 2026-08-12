@@ -139,6 +139,33 @@ pub fn require_finite(name: &str, xs: &[f32]) {
     );
 }
 
+pub fn dot(xs: &[f32], ys: &[f32]) -> f64 {
+    xs.iter()
+        .zip(ys.iter())
+        .map(|(&x, &y)| (x as f64) * (y as f64))
+        .sum()
+}
+
+pub fn l2_norm(xs: &[f32]) -> f64 {
+    xs.iter()
+        .map(|&x| (x as f64) * (x as f64))
+        .sum::<f64>()
+        .sqrt()
+}
+
+pub fn mean_and_std(xs: &[f32]) -> (f32, f32) {
+    let mean = xs.iter().sum::<f32>() / xs.len() as f32;
+
+    let var = xs.iter()
+        .map(|&x| {
+            let d = x - mean;
+            d * d
+        })
+        .sum::<f32>() / xs.len() as f32;
+
+    (mean, var.sqrt())
+}
+
 #[cfg(test)]
 mod test {
     use crate::util::{concat_columns_into, split_columns};
