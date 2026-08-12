@@ -11,7 +11,7 @@ use crate::{
         TransformerBlock, TransformerBlockBackward, TransformerBlockForwardCache,
     },
     model_config::ModelConfig,
-    util::random_f32,
+    util::{finite_slice, random_f32},
 };
 
 #[derive(Default)]
@@ -167,10 +167,18 @@ impl LanguageModel {
         self.blocks
             .iter()
             .zip(cache.blocks.iter_mut())
-            .for_each(|(block, cache)| {
+            .enumerate()
+            .for_each(|(i, (block, cache))| {
                 x = block.forward(ctx, cfg, &x, &cos_table, &sin_table, cache);
+                finite_slice(&format!("fwd:block{i}:out"), &x);
+                finite_slice(&format!("fwd:block{i}:attn_out"), &cache.attn_out);
+                finite_slice(&format!("fwd:block{i}:add1_out"), &cache.add1_out);
+                finite_slice(&format!("fwd:block{i}:ffn_out"), &cache.ffn_out);
             });
 
+        finite_slice("fwd:final_norm_in", &cache.final_norm_in);
+        finite_slice("fwd:final_norm_out", &cache.final_norm_out);
+        finite_slice("fwd:logits", &cache.logits);
         cache.final_norm_in = x.clone();
         cache.final_norm_out = rms_norm(ctx, &x, &self.final_gamma, cfg.eps, cfg.d_model as u32);
 
@@ -205,6 +213,8 @@ impl LanguageModel {
             cfg.d_model as u32,
             cfg.vocab_size as u32,
         );
+        finite_slice("lm:backward:matmul_backward:dx", &dx);
+        finite_slice("lm:backward:matmul_backward:d_lm_head", &d_lm_head);
 
         let (mut dx, d_final_gamma) = rms_norm_backward(
             &ctx,
@@ -213,6 +223,11 @@ impl LanguageModel {
             &self.final_gamma,
             cfg.eps,
             cfg.d_model as u32,
+        );
+        finite_slice("lm:backward:rms_norm_backward:dx", &dx);
+        finite_slice(
+            "lm:backward:rms_norm_backward:d_final_gamma",
+            &d_final_gamma,
         );
 
         let mut d_blocks = Vec::with_capacity(cfg.n_layers as usize);
@@ -226,12 +241,14 @@ impl LanguageModel {
                 &mut cache.blocks[i],
             );
             dx = backward.dx.clone();
+            finite_slice(&format!("lm:backward:blocks{i}:backward:dx"), &dx);
             d_blocks.push(backward);
         }
         d_blocks.reverse();
 
         let d_embedding =
             embedding_backward(&ctx, &dx, &cache.token_ids, cfg.vocab_size, cfg.d_model);
+        finite_slice("lm:backward:embedding_backward:d_embedding", &d_embedding);
 
         LanguageModelBackward {
             dx,

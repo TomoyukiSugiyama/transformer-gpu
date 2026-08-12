@@ -1,12 +1,14 @@
+use std::println;
+
 use crate::{
     gpu_context::GpuContext,
     kernel::{
-        attention::{attention, attention_backward},
+        attention::{attention, attention_backward, attention_backward_cpu, attention_cpu},
         matmul::{matmul_backward, matmul_forward},
         rope::{rope, rope_backward},
     },
     model_config::ModelConfig,
-    util::{concat_columns_into, random_f32, split_columns},
+    util::{concat_columns_into, finite_slice, random_f32, split_columns},
 };
 
 #[derive(Default)]
@@ -167,6 +169,9 @@ impl Attention {
             cfg.d_model as u32,
         );
 
+        finite_slice(&format!("attn:backward:matmul_backward:dwo_in"), &dwo_in);
+        finite_slice(&format!("attn:backward:matmul_backward:dw_o"), &dw_o);
+
         let d_atten_out = split_columns(
             &dwo_in,
             cfg.d_model as usize,
@@ -189,6 +194,19 @@ impl Attention {
                 seq as u32,
                 d_head as u32,
             );
+
+            finite_slice(
+                &format!("attn:backward:matmul_backward:attention_backward:n_heads{i}:dq"),
+                &dq,
+            );
+            finite_slice(
+                &format!("attn:backward:matmul_backward:attention_backward:n_heads{i}:dk"),
+                &dk,
+            );
+            finite_slice(
+                &format!("attn:backward:matmul_backward:attention_backward:n_heads{i}:dv"),
+                &dv,
+            );
             dq_rope.push(dq);
             dk_rope.push(dk);
             dv_heads.push(dv);
@@ -204,6 +222,9 @@ impl Attention {
             .collect();
 
         let dq = concat_columns_into(&dq_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+
+        finite_slice(&format!("attn:backward:concat_columns_into:dq"), &dq);
+
         let (dx_q, dw_q) = matmul_backward(
             ctx,
             &dq,
@@ -214,7 +235,12 @@ impl Attention {
             cfg.d_model as u32,
         );
 
+        finite_slice(&format!("attn:backward:matmul_backward:dx_q"), &dx_q);
+        finite_slice(&format!("attn:backward:matmul_backward:dw_q"), &dw_q);
+
         let dk = concat_columns_into(&dk_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+        finite_slice(&format!("attn:backward:concat_columns_into:dk"), &dk);
+
         let (dx_k, dw_k) = matmul_backward(
             ctx,
             &dk,
@@ -225,7 +251,12 @@ impl Attention {
             cfg.d_model as u32,
         );
 
+        finite_slice(&format!("attn:backward:matmul_backward:dx_k"), &dx_k);
+        finite_slice(&format!("attn:backward:matmul_backward:dw_k"), &dw_k);
+
         let dv = concat_columns_into(&dv_heads, seq, cfg.d_model, d_head, cfg.n_heads);
+        finite_slice(&format!("attn:backward:concat_columns_into:dv"), &dv);
+
         let (dx_v, dw_v) = matmul_backward(
             ctx,
             &dv,
@@ -235,13 +266,16 @@ impl Attention {
             cfg.d_model as u32,
             cfg.d_model as u32,
         );
+        finite_slice(&format!("attn:backward:matmul_backward:dx_v"), &dx_v);
+        finite_slice(&format!("attn:backward:matmul_backward:dw_v"), &dw_v);
 
-        let dx = dx_q
+        let dx: Vec<f32> = dx_q
             .iter()
             .zip(dx_k.iter())
             .zip(dx_v.iter())
             .map(|((q_i, k_i), v_i)| q_i + k_i + v_i)
             .collect();
+        finite_slice(&format!("attn:backward:dx"), &dx);
 
         AttentionBackward {
             dx,

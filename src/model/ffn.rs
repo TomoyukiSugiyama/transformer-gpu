@@ -5,7 +5,7 @@ use crate::{
         swiglu_elementwise::{swiglu_elementwise, swiglu_elementwise_backward},
     },
     model_config::ModelConfig,
-    util::random_f32,
+    util::{finite_slice, random_f32},
 };
 
 #[derive(Default)]
@@ -50,6 +50,7 @@ impl Ffn {
     ) -> Vec<f32> {
         let seq = x.len() / cfg.d_model;
         cache.x_in = x.to_vec();
+        finite_slice("fwd:ffn:x_in", &cache.x_in);
         cache.pre_gate = matmul_forward(
             ctx,
             x,
@@ -58,6 +59,7 @@ impl Ffn {
             cfg.d_model as u32,
             cfg.d_ff as u32,
         );
+        finite_slice("fwd:ffn:matmul_forward:pre_gate", &cache.pre_gate);
 
         cache.up = matmul_forward(
             ctx,
@@ -67,8 +69,11 @@ impl Ffn {
             cfg.d_model as u32,
             cfg.d_ff as u32,
         );
+        finite_slice("fwd:ffn:matmul_forward:up", &cache.up);
 
         cache.swigle_out = swiglu_elementwise(ctx, &cache.pre_gate, &cache.up);
+        finite_slice("fwd:ffn:swiglu_elementwise:swigle_out", &cache.swigle_out);
+
         let y = matmul_forward(
             ctx,
             &cache.swigle_out,
@@ -77,6 +82,8 @@ impl Ffn {
             cfg.d_ff as u32,
             cfg.d_model as u32,
         );
+
+        finite_slice("fwd:ffn:matmul_forward:y", &y);
 
         y
     }

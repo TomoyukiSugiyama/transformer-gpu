@@ -9,7 +9,7 @@ use crate::{
         ffn::{Ffn, FfnBackward, FfnForwardCache},
     },
     model_config::ModelConfig,
-    util::random_f32,
+    util::{finite_slice, random_f32},
 };
 
 #[derive(Default)]
@@ -60,6 +60,7 @@ impl TransformerBlock {
         cache: &mut TransformerBlockForwardCache,
     ) -> Vec<f32> {
         cache.x_in = x.to_vec();
+        finite_slice("fwd:block:x_in", x);
         cache.norm1_out = rms_norm(&ctx, &x, &self.gamma_1, cfg.eps, cfg.d_model as u32);
         cache.attn_out = self.attn.forward(
             ctx,
@@ -69,7 +70,9 @@ impl TransformerBlock {
             sin_table,
             &mut cache.attn,
         );
+        finite_slice("fwd:block:attn_out", &cache.attn_out);
         cache.add1_out = residual_add(&ctx, x, &cache.attn_out);
+        finite_slice("fwd:block:add1_out", &cache.add1_out);
         cache.norm2_out = rms_norm(
             &ctx,
             &cache.add1_out,
@@ -77,8 +80,14 @@ impl TransformerBlock {
             cfg.eps,
             cfg.d_model as u32,
         );
+
+        finite_slice("fwd:block:norm2_out", &cache.norm2_out);
+
         cache.ffn_out = self.ffn.forward(ctx, cfg, &cache.norm2_out, &mut cache.ffn);
-        residual_add(&ctx, &cache.add1_out, &cache.ffn_out)
+        finite_slice("fwd:block:ffn_out", &cache.ffn_out);
+        let out = residual_add(&ctx, &cache.add1_out, &cache.ffn_out);
+        finite_slice("fwd:block:out", &out);
+        out
     }
 
     pub fn backward(
@@ -97,6 +106,22 @@ impl TransformerBlock {
 
         // FFN backward
         let ffn_backward = self.ffn.backward(&ctx, cfg, &d_ffn_out, &mut cache.ffn);
+        finite_slice(
+            "transformer_block:backward:ffn:backward:dx",
+            &ffn_backward.dx,
+        );
+        finite_slice(
+            "transformer_block:backward:ffn:backward:dw_gate",
+            &ffn_backward.dw_gate,
+        );
+        finite_slice(
+            "transformer_block:backward:ffn:backward:dw_up",
+            &ffn_backward.dw_up,
+        );
+        finite_slice(
+            "transformer_block:backward:ffn:backward:dw_down",
+            &ffn_backward.dw_down,
+        );
 
         // rms_norm2 backward: norm2_out = rms_norm(add1_out, γ2)
         let (d_add1_out_b, d_gamma_2) = rms_norm_backward(
@@ -108,12 +133,36 @@ impl TransformerBlock {
             cfg.d_model as u32,
         );
 
+        finite_slice(
+            "transformer_block:backward:rms_norm2_bwd:input:dy",
+            &ffn_backward.dx,
+        );
+        finite_slice(
+            "transformer_block:backward:rms_norm2_bwd:input:x_in",
+            &cache.add1_out,
+        );
+        finite_slice(
+            "transformer_block:backward:rms_norm2_bwd:input:gamma",
+            &self.gamma_2,
+        );
+
+        finite_slice(
+            "transformer_block:backward:rms_norm_backward:d_add1_out_b",
+            &d_add1_out_b,
+        );
+        finite_slice(
+            "transformer_block:backward:rms_norm_backward:d_gamma_2",
+            &d_gamma_2,
+        );
+
         // 2つの d_add1_out を合算
         let d_add1_out: Vec<f32> = d_add1_out_a
             .iter()
             .zip(d_add1_out_b.iter())
             .map(|(a, b)| a + b)
             .collect();
+
+        finite_slice("transformer_block:backward:d_add1_out", &d_add1_out);
 
         // 1段目 residual_add backward: add1_out = x + attn_out
         let d_attn_out = d_add1_out.clone();
@@ -123,6 +172,31 @@ impl TransformerBlock {
         let attn_backward =
             self.attn
                 .backward(ctx, cfg, &d_attn_out, cos_table, sin_table, &mut cache.attn);
+
+        finite_slice(
+            "transformer_block:backward:attn:backward:dx",
+            &attn_backward.dx,
+        );
+
+        finite_slice(
+            "transformer_block:backward:attn:backward:dw_q",
+            &attn_backward.dw_q,
+        );
+
+        finite_slice(
+            "transformer_block:backward:attn:backward:dw_k",
+            &attn_backward.dw_k,
+        );
+
+        finite_slice(
+            "transformer_block:backward:attn:backward:dw_v",
+            &attn_backward.dw_v,
+        );
+
+        finite_slice(
+            "transformer_block:backward:attn:backward:dw_o",
+            &attn_backward.dw_o,
+        );
 
         // rms_norm1 backward: norm1_out = rms_norm(x_in, γ1)
         let (dx_b, d_gamma_1) = rms_norm_backward(
@@ -134,8 +208,35 @@ impl TransformerBlock {
             cfg.d_model as u32,
         );
 
+        let x_in_rms = (cache.x_in.iter().map(|v| v * v).sum::<f32>() / cfg.d_model as f32).sqrt();
+        if x_in_rms > 10.0 {
+            eprintln!("bwd:rms_norm1_bwd:x_in_rms: {x_in_rms:.4}");
+        }
+
+        finite_slice(
+            "transformer_block:backward:rms_norm1_bwd:input:dy",
+            &attn_backward.dx,
+        );
+        finite_slice(
+            "transformer_block:backward:rms_norm1_bwd:input:x_in",
+            &cache.x_in,
+        );
+        finite_slice(
+            "transformer_block:backward:rms_norm1_bwd:input:gamma",
+            &self.gamma_1,
+        );
+
+        finite_slice("transformer_block:backward:rms_norm_backward:dx_b", &dx_b);
+
+        finite_slice(
+            "transformer_block:backward:rms_norm_backward:d_gamma_1",
+            &d_gamma_1,
+        );
+
         // dx を合算
         let dx: Vec<f32> = dx_a.iter().zip(&dx_b).map(|(a, b)| a + b).collect();
+
+        finite_slice("transformer_block:backward:dx", &dx);
 
         TransformerBlockBackward {
             dx,

@@ -7,7 +7,12 @@ use transformer_gpu::tokenizer::train_tokenizer;
 use transformer_gpu::train::{TrainConfig, Trainer};
 
 fn main() {
-    let mut trainer = Trainer::new(TrainConfig::tiny_shakespeare());
+    let train_cofig = TrainConfig {
+        batch_size: 1,
+        ..TrainConfig::tiny_shakespeare()
+    };
+
+    let mut trainer = Trainer::new(train_cofig);
     let corpus_text = Dataset::from_file(&trainer.tcfg.corpus).unwrap();
 
     let ctx = GpuContext::new();

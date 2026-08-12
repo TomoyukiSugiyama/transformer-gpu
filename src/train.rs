@@ -1,4 +1,4 @@
-use std::{io::Write, time::Instant};
+use std::{io::Write, println, time::Instant};
 
 use crate::{
     checkpoint::{Checkpointable, WeightMap},
@@ -9,6 +9,7 @@ use crate::{
     model::language_model::{LanguageModel, LanguageModelBackward, LanguageModelForwardCache},
     model_config::ModelConfig,
     tokenizer::TokenizerKind,
+    util::finite_slice,
 };
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
@@ -102,13 +103,88 @@ impl Trainer {
         let target: Vec<usize> = input_ids[1..].iter().map(|&t| t as usize).collect();
 
         let logits = model.forward(ctx, cfg, input, cache);
+        finite_slice("train:compute_grads:forward:logits", &logits);
         let (loss, d_logits) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
+        finite_slice("train:compute_grads:forward:d_logits", &d_logits);
 
         if !loss.is_finite() {
             return None;
         }
 
         let grads = model.backward(ctx, cfg, &d_logits, cache);
+
+        finite_slice("train:compute_grads:forward:grads:dx", &grads.dx);
+        finite_slice(
+            "train:compute_grads:forward:grads:d_embedding",
+            &grads.d_embedding,
+        );
+
+        for (i, block) in grads.d_blocks.iter().enumerate() {
+
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:dx"),
+                &block.dx,
+            );
+            let attn = &block.attn_backward;
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:attn_backward:dx"),
+                &attn.dx,
+            );
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:attn_backward:dw_q"),
+                &attn.dw_q,
+            );
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:attn_backward:dw_k"),
+                &attn.dw_k,
+            );
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:attn_backward:dw_v"),
+                &attn.dw_v,
+            );
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:attn_backward:dw_o"),
+                &attn.dw_o,
+            );
+            let ffn = &block.ffn_backward;
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:ffn_backward:dx"),
+                &ffn.dx,
+            );
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:ffn_backward:dw_gate"),
+                &ffn.dw_gate,
+            );
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:ffn_backward:dw_up"),
+                &ffn.dw_up,
+            );
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:ffn_backward:dw_down"),
+                &ffn.dw_down,
+            );
+
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:d_gamma_1"),
+                &block.d_gamma_1,
+            );
+            finite_slice(
+                &format!("train:compute_grads:forward:grads:d_blocks{i}:d_gamma_2"),
+                &block.d_gamma_2,
+            );
+        }
+        finite_slice(
+            "train:compute_grads:forward:grads:d_embedding",
+            &grads.d_embedding,
+        );
+        finite_slice(
+            "train:compute_grads:forward:grads:d_final_gamma",
+            &grads.d_final_gamma,
+        );
+        finite_slice(
+            "train:compute_grads:forward:grads:d_lm_head",
+            &grads.d_lm_head,
+        );
         Some((loss, grads))
     }
 
@@ -154,6 +230,13 @@ impl Trainer {
                 .step(&format!("b{i}.w_up"), &mut block.ffn.w_up, &fb.dw_up);
             self.opt
                 .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
+        }
+
+        for (i, block) in model.blocks.iter().enumerate() {
+            let norm = block.ffn.w_down.iter().map(|v| v*v).sum::<f32>().sqrt();
+            let norm_up = block.ffn.w_up.iter().map(|v| v*v).sum::<f32>().sqrt();
+            let norm_gate = block.ffn.w_gate.iter().map(|v| v*v).sum::<f32>().sqrt();
+            eprintln!("b{i}:w_down_norm={norm:.6} w_up_norm={norm_up:.6} w_gate_norm={norm_gate:.6}");
         }
     }
 

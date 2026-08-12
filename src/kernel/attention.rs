@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-use crate::gpu_context::GpuContext;
+use crate::{gpu_context::GpuContext, util::finite_slice};
 
 const BR: u32 = 64;
 const MAX_D_HEAD: u32 = 128;
@@ -295,10 +295,20 @@ pub fn attention_backward(
     ctx.queue.submit([encoder.finish()]);
 
     // dq は i32 bits → f32 に変換
-    let dq = read_gpu_buffer::<i32>(ctx, &read_dq)
-        .iter()
-        .map(|&x| f32::from_bits(x as u32))
-        .collect();
+    // let dq = read_gpu_buffer::<i32>(ctx, &read_dq)
+    //     .iter()
+    //     .map(|&x| f32::from_bits(x as u32))
+    //     .collect();
+    let dq:Vec<f32> = read_gpu_buffer::<i32>(ctx, &read_dq)
+    .iter()
+    .map(|&x| bytemuck::cast::<i32, f32>(x))
+    .collect();
+
+    finite_slice(
+        &format!("attn_backward:dq_raw"),
+        &dq,
+    );
+
     let dk = read_gpu_buffer::<f32>(ctx, &read_dk);
     let dv = read_gpu_buffer::<f32>(ctx, &read_dv);
 
@@ -538,7 +548,6 @@ pub fn before_flash_attention(
 }
 
 // CPU リファレンス
-#[cfg(test)]
 pub fn attention_cpu(
     q: &[f32],
     k: &[f32],
@@ -591,7 +600,6 @@ pub fn attention_cpu(
     (out, l_vec)
 }
 
-#[cfg(test)]
 pub fn attention_backward_cpu(
     do_: &[f32], // [seq, d_head]
     q: &[f32],   // [seq, d_head]

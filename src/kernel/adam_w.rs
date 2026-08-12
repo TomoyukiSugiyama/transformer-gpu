@@ -104,6 +104,12 @@ impl AdamW {
             "param/grad size mismatch: {param_id}"
         );
 
+        let grad_norm: f32 = grad.iter().map(|g| g * g).sum::<f32>().sqrt();
+        eprintln!(
+            "  adam::step {param_id} grad_norm={grad_norm:.6} step={}",
+            self.step_count
+        );
+
         let scale = self.grad_scale;
         let scaled_grad: Vec<f32> = grad.iter().map(|&g| g * scale).collect();
 

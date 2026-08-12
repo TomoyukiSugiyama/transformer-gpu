@@ -68,7 +68,7 @@ pub fn finite_slice(name: &str, xs: &[f32]) -> bool {
             ok = false;
             break;
         }
-        if x.abs() > 1e6 {
+        if x.abs() > 1e1 {
             println!("{name} overflow-ish: {x:e}");
             ok = false;
             break;
