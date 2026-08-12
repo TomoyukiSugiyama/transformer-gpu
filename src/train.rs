@@ -197,12 +197,12 @@ impl Trainer {
         self.opt.set_lr(lr);
         self.opt.increment_step();
 
-        // self.opt
-        //     .step("embedding", &mut model.embedding, &grads.d_embedding);
-        // self.opt
-        //     .step("final_gamma", &mut model.final_gamma, &grads.d_final_gamma);
-        // self.opt
-        //     .step("lm_head", &mut model.lm_head, &grads.d_lm_head);
+        self.opt
+            .step("embedding", &mut model.embedding, &grads.d_embedding);
+        self.opt
+            .step("final_gamma", &mut model.final_gamma, &grads.d_final_gamma);
+        self.opt
+            .step("lm_head", &mut model.lm_head, &grads.d_lm_head);
 
         for (i, (block, bwd)) in model
             .blocks
@@ -210,12 +210,62 @@ impl Trainer {
             .zip(grads.d_blocks.iter())
             .enumerate()
         {
+            self.opt
+                .step(&format!("b{i}.gamma_1"), &mut block.gamma_1, &bwd.d_gamma_1);
+            self.opt
+                .step(&format!("b{i}.gamma_2"), &mut block.gamma_2, &bwd.d_gamma_2);
+            let ab = &bwd.attn_backward;
+            let before_w_o = block.attn.w_o.clone();
+            self.opt
+                .step(&format!("b{i}.wq"), &mut block.attn.w_q, &ab.dw_q);
+            self.opt
+                .step(&format!("b{i}.wk"), &mut block.attn.w_k, &ab.dw_k);
+            self.opt
+                .step(&format!("b{i}.wv"), &mut block.attn.w_v, &ab.dw_v);
+            self.opt
+                .step(&format!("b{i}.wo"), &mut block.attn.w_o, &ab.dw_o);
             let fb = &bwd.ffn_backward;
             let before_w_down = block.ffn.w_down.clone();
             self.opt
+                .step(&format!("b{i}.w_gate"), &mut block.ffn.w_gate, &fb.dw_gate);
+            self.opt
+                .step(&format!("b{i}.w_up"), &mut block.ffn.w_up, &fb.dw_up);
+            self.opt
                 .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
-
             if step % 20 == 0 {
+                let update_w_o: Vec<f32> = block
+                    .attn
+                    .w_o
+                    .iter()
+                    .zip(before_w_o.iter())
+                    .map(|(&after, &before)| after - before)
+                    .collect();
+
+                let w_before = tensor_stats(&before_w_o);
+                let grad = tensor_stats(&ab.dw_o);
+                let delta = tensor_stats(&update_w_o);
+                let w_after = tensor_stats(&block.attn.w_o);
+
+                println!(
+                    concat!(
+                        "step={} b={} w_o ",
+                        "w_rms={:.4e}->{:.4e} ",
+                        "w_max={:.4e}->{:.4e} ",
+                        "g_rms={:.4e} g_max={:.4e} ",
+                        "delta_rms={:.4e} delta_max={:.4e}"
+                    ),
+                    step,
+                    i,
+                    w_before.rms,
+                    w_after.rms,
+                    w_before.max_abs,
+                    w_after.max_abs,
+                    grad.rms,
+                    grad.max_abs,
+                    delta.rms,
+                    delta.max_abs,
+                );
+
                 let update: Vec<f32> = block
                     .ffn
                     .w_down
@@ -249,52 +299,33 @@ impl Trainer {
                     delta.max_abs,
                 );
 
-                let (mean_before, std_before) = mean_and_std(&before_w_down);
-                let (mean_after, std_after) = mean_and_std(&block.ffn.w_down);
+                // let (mean_before, std_before) = mean_and_std(&before_w_down);
+                // let (mean_after, std_after) = mean_and_std(&block.ffn.w_down);
 
-                println!(
-                    "step={step} b={i} w_down_distribution \
-                    mean={mean_before:.4e}->{mean_after:.4e} \
-                    std={std_before:.4e}->{std_after:.4e}"
-                );
-                let grad_dot_delta = dot(&fb.dw_down, &update);
-                let grad_norm = l2_norm(&fb.dw_down);
-                let delta_norm = l2_norm(&update);
+                // println!(
+                //     "step={step} b={i} w_down_distribution \
+                //     mean={mean_before:.4e}->{mean_after:.4e} \
+                //     std={std_before:.4e}->{std_after:.4e}"
+                // );
+                // let grad_dot_delta = dot(&fb.dw_down, &update);
+                // let grad_norm = l2_norm(&fb.dw_down);
+                // let delta_norm = l2_norm(&update);
 
-                let cosine = if grad_norm > 0.0 && delta_norm > 0.0 {
-                    grad_dot_delta / (grad_norm * delta_norm)
-                } else {
-                    0.0
-                };
+                // let cosine = if grad_norm > 0.0 && delta_norm > 0.0 {
+                //     grad_dot_delta / (grad_norm * delta_norm)
+                // } else {
+                //     0.0
+                // };
 
-                println!(
-                    "step={step} b={i} w_down_direction \
-                    grad_dot_delta={grad_dot_delta:.4e} \
-                    cos_grad_delta={cosine:.6}"
-                );
+                // println!(
+                //     "step={step} b={i} w_down_direction \
+                //     grad_dot_delta={grad_dot_delta:.4e} \
+                //     cos_grad_delta={cosine:.6}"
+                // );
             }
 
+            require_finite(&format!("b{i}.wo"), &block.attn.w_o);
             require_finite(&format!("b{i}.w_down"), &block.ffn.w_down);
-            // self.opt
-            //     .step(&format!("b{i}.gamma_1"), &mut block.gamma_1, &bwd.d_gamma_1);
-            // self.opt
-            //     .step(&format!("b{i}.gamma_2"), &mut block.gamma_2, &bwd.d_gamma_2);
-            // let ab = &bwd.attn_backward;
-            // self.opt
-            //     .step(&format!("b{i}.wq"), &mut block.attn.w_q, &ab.dw_q);
-            // self.opt
-            //     .step(&format!("b{i}.wk"), &mut block.attn.w_k, &ab.dw_k);
-            // self.opt
-            //     .step(&format!("b{i}.wv"), &mut block.attn.w_v, &ab.dw_v);
-            // self.opt
-            //     .step(&format!("b{i}.wo"), &mut block.attn.w_o, &ab.dw_o);
-            // let fb = &bwd.ffn_backward;
-            // self.opt
-            //     .step(&format!("b{i}.w_gate"), &mut block.ffn.w_gate, &fb.dw_gate);
-            // self.opt
-            //     .step(&format!("b{i}.w_up"), &mut block.ffn.w_up, &fb.dw_up);
-            // self.opt
-            //     .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
         }
 
         // for (i, block) in model.blocks.iter().enumerate() {
