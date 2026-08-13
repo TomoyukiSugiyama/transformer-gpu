@@ -4,6 +4,7 @@ use wgpu::util::DeviceExt;
 const SIZE: u32 = 256;
 
 pub fn embedding(ctx: &GpuContext, token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f32> {
+    let seq_len = token_ids.len();
     let size = (token_ids.len() * d_model) as u32;
     let byte_size = (size * 4) as u64;
     let buf_token_ids = ctx
@@ -27,7 +28,7 @@ pub fn embedding(ctx: &GpuContext, token_ids: &[u32], weight: &[f32], d_model: u
         mapped_at_creation: false,
     });
 
-    let dims_padded: [u32; 4] = [d_model as u32, 0, 0, 0];
+    let dims_padded: [u32; 4] = [d_model as u32, seq_len as u32, 0, 0];
     let buf_dims = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {

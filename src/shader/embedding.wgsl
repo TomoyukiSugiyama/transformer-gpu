@@ -2,6 +2,7 @@ const SIZE: u32 = 256u;
 
 struct Dims {
     d_model: u32,
+    seq_len: u32,
 }
 
 @group(0) @binding(0) var<storage, read> token_ids: array<u32>;
@@ -14,6 +15,10 @@ fn embedding(
     @builtin(global_invocation_id) gid: vec3<u32>,
 ) {
     let i = gid.x;
+    if (i >= dims.seq_len) {
+        return;
+    }
+
     let token_id = token_ids[i];
     let d = dims.d_model;
 
