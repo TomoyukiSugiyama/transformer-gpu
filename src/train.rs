@@ -115,7 +115,7 @@ impl Trainer {
         finite_slice("train:compute_grads:forward:logits", &logits);
         // let (loss, d_logits) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
         let (loss, d_logits) = cross_entropy_loss_cpu(&logits, &target, seq, cfg.vocab_size);
-        let (_, d_logits_gpu) = cross_entropy_loss(ctx,&logits, &target, seq, cfg.vocab_size);
+        let (_, d_logits_gpu) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
         println!("d_logits");
         assert_close(&d_logits_gpu, &d_logits, 1e-4, 1e-5);
 
@@ -126,7 +126,7 @@ impl Trainer {
         }
 
         let grads = model.backward_cpu(cfg, &d_logits, cache);
-        let grads_gpu = model.backward_cpu(cfg, &d_logits_gpu, cache_gpu);
+        let grads_gpu = model.backward(ctx, cfg, &d_logits_gpu, cache_gpu);
         println!("grads.dx");
         assert_close(&grads_gpu.dx, &grads.dx, 1e-4, 1e-5);
         println!("grads.d_embedding");
@@ -142,8 +142,12 @@ impl Trainer {
             &grads.d_embedding,
         );
 
-
-        for ((i,block), block_gpu) in grads.d_blocks.iter().enumerate().zip(grads_gpu.d_blocks.iter()) {
+        for ((i, block), block_gpu) in grads
+            .d_blocks
+            .iter()
+            .enumerate()
+            .zip(grads_gpu.d_blocks.iter())
+        {
             println!("d_blocks{i}:");
             assert_close(&block_gpu.dx, &block.dx, 1e-4, 1e-5);
             assert_close(&block_gpu.d_gamma_1, &block.d_gamma_1, 1e-4, 1e-5);
