@@ -4,7 +4,10 @@ use crate::{
     checkpoint::{Checkpointable, WeightMap},
     dataset::{Dataset, Split},
     gpu_context::GpuContext,
-    kernel::{adam_w::AdamW, cross_entropy_loss::cross_entropy_loss},
+    kernel::{
+        adam_w::AdamW,
+        cross_entropy_loss::{cross_entropy_loss, cross_entropy_loss_cpu},
+    },
     lr_scheduler::{LrScheduleKind, LrScheduler},
     model::language_model::{LanguageModel, LanguageModelBackward, LanguageModelForwardCache},
     model_config::ModelConfig,
@@ -102,16 +105,18 @@ impl Trainer {
         let input = &input_ids[..seq];
         let target: Vec<usize> = input_ids[1..].iter().map(|&t| t as usize).collect();
 
-        let logits = model.forward(ctx, cfg, input, cache);
+        // let logits = model.forward(ctx, cfg, input, cache);
+        let logits = model.forward_cpu(cfg, input, cache);
         finite_slice("train:compute_grads:forward:logits", &logits);
-        let (loss, d_logits) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
+        // let (loss, d_logits) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
+        let (loss, d_logits) = cross_entropy_loss_cpu(&logits, &target, seq, cfg.vocab_size);
         finite_slice("train:compute_grads:forward:d_logits", &d_logits);
 
         if !loss.is_finite() {
             return None;
         }
 
-        let grads = model.backward(ctx, cfg, &d_logits, cache);
+        let grads = model.backward_cpu(cfg, &d_logits, cache);
 
         finite_slice("train:compute_grads:forward:grads:dx", &grads.dx);
         finite_slice(
@@ -360,8 +365,9 @@ impl Trainer {
             let window = &val_ids[offset..offset + seq + 1];
             let input = &window[..seq];
             let target: Vec<usize> = window[1..].iter().map(|&t| t as usize).collect();
-            let logits = model.forward(ctx, cfg, input, cache);
-            let (loss, _) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
+            let logits = model.forward_cpu(cfg, input, cache);
+            // let (loss, _) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
+            let (loss, _) = cross_entropy_loss_cpu(&logits, &target, seq, cfg.vocab_size);
             total += loss;
         }
         total / self.tcfg.eval_batches as f32
