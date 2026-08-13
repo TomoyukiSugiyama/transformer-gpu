@@ -1,14 +1,9 @@
 use std::println;
 
 use crate::{
-    gpu_context::GpuContext,
-    kernel::{
-        attention::{attention, attention_backward, attention_backward_cpu, attention_cpu},
-        matmul::{matmul_backward, matmul_forward},
-        rope::{rope, rope_backward},
-    },
-    model_config::ModelConfig,
-    util::{concat_columns_into, finite_slice, random_f32, split_columns},
+    gpu_context::GpuContext, kernel::{
+        attention::{attention, attention_backward, attention_backward_cpu, attention_cpu}, matmul::{matmul_backward, matmul_forward, matmul_forward_cpu}, rope::{rope, rope_backward},
+    }, model_config::ModelConfig, util::{concat_columns_into, finite_slice, random_f32, split_columns, tensor_stats},
 };
 
 #[derive(Default)]
@@ -56,6 +51,7 @@ impl Attention {
         cos_table: &[f32],
         sin_table: &[f32],
         cache: &mut AttentionForwardCache,
+
     ) -> Vec<f32> {
         assert!(
             cfg.d_model % cfg.n_heads == 0,
@@ -90,6 +86,21 @@ impl Attention {
             cfg.d_model as u32,
             cfg.d_model as u32,
         );
+
+        // let q_s = tensor_stats(&q);
+        // let k_s = tensor_stats(&k);
+        // let v_s = tensor_stats(&v);
+
+        // println!(
+        //     "attn:fwd:qkv \
+        //     q_rms={:.4e} \
+        //     k_rms={:.4e} \
+        //     v_rms={:.4e} \
+        //     q_max={:.4e} \
+        //     k_max={:.4e} \
+        //     v_max={:.4e}",
+        //     q_s.rms, k_s.rms, v_s.rms, q_s.max_abs, k_s.max_abs, v_s.max_abs,
+        // );
         let q_heads = split_columns(
             &q,
             cfg.d_model as usize,
@@ -135,14 +146,28 @@ impl Attention {
 
         cache.wo_in = concat_columns_into(&cache.attn_out, seq, cfg.d_model, d_head, cfg.n_heads);
 
-        matmul_forward(
+        // let wo_in_s = tensor_stats(&cache.wo_in);
+        // println!(
+        //     "attn:fwd:wo_in \
+        //     rms={:.4e} max={:.4e}",
+        //     wo_in_s.rms, wo_in_s.max_abs,
+        // );
+        let out = matmul_forward(
             ctx,
             &cache.wo_in,
             &self.w_o,
             seq as u32,
             cfg.d_model as u32,
             cfg.d_model as u32,
-        )
+        );
+    //     let out_s = tensor_stats(&out);
+    //     println!(
+    //         "attn:fwd:after_wo \
+    //  rms={:.4e} max={:.4e}",
+    //         out_s.rms, out_s.max_abs,
+    //     );
+
+        out
     }
 
     pub fn backward(
@@ -287,7 +312,6 @@ impl Attention {
     }
 
     // CPU リファレンス
-    #[cfg(test)]
     pub fn forward_cpu(
         &self,
         cfg: &ModelConfig,
@@ -296,7 +320,7 @@ impl Attention {
         sin_table: &[f32],
         cache: &mut AttentionForwardCache,
     ) -> Vec<f32> {
-        use crate::kernel::{matmul::matmul_forward_cpu, rope::rope_cpu};
+        use crate::kernel::{ rope::rope_cpu};
 
         assert!(
             cfg.d_model % cfg.n_heads == 0,
@@ -363,7 +387,6 @@ impl Attention {
         matmul_forward_cpu(&cache.wo_in, &self.w_o, seq, cfg.d_model, cfg.d_model)
     }
 
-    #[cfg(test)]
     pub fn backward_cpu(
         &self,
         cfg: &ModelConfig,

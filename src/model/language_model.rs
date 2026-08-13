@@ -11,7 +11,7 @@ use crate::{
         TransformerBlock, TransformerBlockBackward, TransformerBlockForwardCache,
     },
     model_config::ModelConfig,
-    util::{finite_slice, random_f32},
+    util::{finite_slice, random_f32, tensor_stats},
 };
 
 #[derive(Default)]
@@ -174,6 +174,66 @@ impl LanguageModel {
                 finite_slice(&format!("fwd:block{i}:attn_out"), &cache.attn_out);
                 finite_slice(&format!("fwd:block{i}:add1_out"), &cache.add1_out);
                 finite_slice(&format!("fwd:block{i}:ffn_out"), &cache.ffn_out);
+
+                // let wo_in_s = tensor_stats(&cache.attn.wo_in);
+                // let attn_out_s = tensor_stats(&cache.attn_out);
+                // let ffn_out_s = tensor_stats(&cache.ffn_out);
+                // let out_s = tensor_stats(&x);
+
+                // println!(
+                //     "block={i} \
+                //      wo_in_rms={:.4e} \
+                //      attn_out_rms={:.4e} \
+                //      ffn_out_rms={:.4e} \
+                //      out_rms={:.4e} \
+                //      attn_out_max={:.4e} \
+                //      out_max={:.4e}",
+                //     wo_in_s.rms,
+                //     attn_out_s.rms,
+                //     ffn_out_s.rms,
+                //     out_s.rms,
+                //     attn_out_s.max_abs,
+                //     out_s.max_abs,
+                // );
+
+                let ffn = &cache.ffn;
+
+                let pre_gate = tensor_stats(&ffn.pre_gate);
+                let up = tensor_stats(&ffn.up);
+                let swiglu = tensor_stats(&ffn.swigle_out);
+                let y = tensor_stats(&cache.ffn_out);
+
+                let w_gate = tensor_stats(&block.ffn.w_gate);
+                let w_up = tensor_stats(&block.ffn.w_up);
+                let w_down = tensor_stats(&block.ffn.w_down);
+
+                let observed_down_gain = y.rms / swiglu.rms.max(1e-12);
+                let expected_down_gain = (cfg.d_ff as f32).sqrt() * w_down.rms;
+                println!(
+                    "block={i}:ffn \
+                     pre_gate_rms={:.4e} \
+                     up_rms={:.4e} \
+                     swiglu_rms={:.4e} \
+                     y_rms={:.4e} \
+                     y_max={:.4e} \
+                     w_gate_rms={:.4e} \
+                     w_up_rms={:.4e} \
+                     w_down_rms={:.4e} \
+                     w_down_max={:.4e} \
+                     down_gain_obs={:.4e} \
+                     down_gain_exp={:.4e}",
+                    pre_gate.rms,
+                    up.rms,
+                    swiglu.rms,
+                    y.rms,
+                    y.max_abs,
+                    w_gate.rms,
+                    w_up.rms,
+                    w_down.rms,
+                    w_down.max_abs,
+                    observed_down_gain,
+                    expected_down_gain,
+                );
             });
 
         cache.final_norm_in = x.clone();
@@ -240,6 +300,39 @@ impl LanguageModel {
                 &sin_table,
                 &mut cache.blocks[i],
             );
+
+            // let a = &backward.attn_backward;
+            // let dwq_s = tensor_stats(&a.dw_q);
+            // let dwk_s = tensor_stats(&a.dw_k);
+            // let dwv_s = tensor_stats(&a.dw_v);
+            // let dwo_s = tensor_stats(&a.dw_o);
+            // let dx_s = tensor_stats(&a.dx);
+
+            // println!(
+            //     "block={i}:attn_bwd \
+            //      dwq_rms={:.4e} \
+            //      dwk_rms={:.4e} \
+            //      dwv_rms={:.4e} \
+            //      dwo_rms={:.4e} \
+            //      attn_dx_rms={:.4e}",
+            //     dwq_s.rms, dwk_s.rms, dwv_s.rms, dwo_s.rms, dx_s.rms,
+            // );
+
+            let a = &backward.ffn_backward;
+            let dwdown_s = tensor_stats(&a.dw_down);
+            let dwgate_s = tensor_stats(&a.dw_gate);
+            let dwup_s = tensor_stats(&a.dw_up);
+            let dx_s = tensor_stats(&a.dx);
+
+            println!(
+                "block={i}:ffn_bwd \
+                 dwdown_rms={:.4e} \
+                 dwgate_rms={:.4e} \
+                 dwup_rms={:.4e} \
+                 ffn_dx_rms={:.4e}",
+                dwdown_s.rms, dwgate_s.rms, dwup_s.rms, dx_s.rms,
+            );
+
             dx = backward.dx.clone();
             finite_slice(&format!("lm:backward:blocks{i}:backward:dx"), &dx);
             d_blocks.push(backward);
@@ -259,7 +352,6 @@ impl LanguageModel {
         }
     }
 
-    #[cfg(test)]
     pub fn forward_cpu(
         &self,
         cfg: &ModelConfig,
@@ -299,7 +391,6 @@ impl LanguageModel {
         cache.logits.clone()
     }
 
-    #[cfg(test)]
     pub fn backward_cpu(
         &self,
         cfg: &ModelConfig,

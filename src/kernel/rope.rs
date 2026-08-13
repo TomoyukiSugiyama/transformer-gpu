@@ -302,7 +302,6 @@ pub fn rope_backward(
 }
 
 // CPU リファレンス
-#[cfg(test)]
 pub fn rope_cpu(x: &[f32], d_head: usize, cos_table: &[f32], sin_table: &[f32]) -> Vec<f32> {
     assert!(d_head % 2 == 0, "d_head must be even for RoPE");
     assert_eq!(x.len() % d_head, 0, "x.len() must be divisible by d_head");
@@ -343,7 +342,6 @@ pub fn rope_cpu(x: &[f32], d_head: usize, cos_table: &[f32], sin_table: &[f32]) 
     out
 }
 
-#[cfg(test)]
 pub fn rope_backward_cpu(
     dy: &[f32],
     d_head: usize,

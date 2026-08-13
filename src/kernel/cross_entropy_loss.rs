@@ -144,7 +144,6 @@ pub fn cross_entropy_loss(
     (loss, grad)
 }
 
-#[cfg(test)]
 pub fn cross_entropy_loss_cpu(
     logits: &[f32],    // (seq * vocab_size)
     targets: &[usize], // (seq,)
@@ -173,7 +172,6 @@ pub fn cross_entropy_loss_cpu(
     (total_loss, grad_data)
 }
 
-#[cfg(test)]
 pub fn cross_entropy_loss_row_cpu(logits: &[f32], target: usize) -> (f32, Vec<f32>) {
     // Softmax
     let max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);

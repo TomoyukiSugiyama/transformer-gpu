@@ -139,7 +139,6 @@ pub fn matmul_backward(
 }
 
 // CPU リファレンス
-#[cfg(test)]
 fn matmul_cpu(
     a: &[f32],
     b: &[f32],
@@ -163,12 +162,10 @@ fn matmul_cpu(
     c
 }
 
-#[cfg(test)]
 pub fn matmul_forward_cpu(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     matmul_cpu(a, b, m, k, n, false, false)
 }
 
-#[cfg(test)]
 pub fn matmul_backward_cpu(
     grad_output: &[f32], // dY: (m × n)
     a: &[f32],           // forward の X: (m × k)

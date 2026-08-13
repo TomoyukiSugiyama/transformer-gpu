@@ -227,7 +227,6 @@ pub fn embedding_backward(
 }
 
 // CPU リファレンス
-#[cfg(test)]
 pub fn embedding_cpu(token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f32> {
     token_ids
         .iter()
@@ -238,7 +237,6 @@ pub fn embedding_cpu(token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f
         .collect()
 }
 
-#[cfg(test)]
 pub fn embedding_backward_cpu(
     dy: &[f32],
     token_ids: &[u32],

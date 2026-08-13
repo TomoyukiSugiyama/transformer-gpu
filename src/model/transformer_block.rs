@@ -248,7 +248,6 @@ impl TransformerBlock {
     }
 
     // CPU リファレンス
-    #[cfg(test)]
     pub fn forward_cpu(
         &self,
         cfg: &ModelConfig,
@@ -269,7 +268,6 @@ impl TransformerBlock {
         residual_add_cpu(&cache.add1_out, &cache.ffn_out)
     }
 
-    #[cfg(test)]
     pub fn backward_cpu(
         &self,
         cfg: &ModelConfig,

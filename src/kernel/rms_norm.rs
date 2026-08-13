@@ -296,7 +296,6 @@ pub fn rms_norm_backward(
 }
 
 // CPU リファレンス
-#[cfg(test)]
 pub fn rms_norm_cpu(x: &[f32], gamma: &[f32], eps: f32, d_model: usize) -> Vec<f32> {
     assert_eq!(x.len() % d_model, 0, "x.len() must be divisible by d_model");
 
@@ -317,7 +316,6 @@ pub fn rms_norm_cpu(x: &[f32], gamma: &[f32], eps: f32, d_model: usize) -> Vec<f
     out
 }
 
-#[cfg(test)]
 pub fn rms_norm_backward_cpu(
     dy: &[f32],    // (seq × d_model)
     x: &[f32],     // (seq × d_model)  forward の入力

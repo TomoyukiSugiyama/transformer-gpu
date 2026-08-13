@@ -5,7 +5,7 @@ use crate::{
         swiglu_elementwise::{swiglu_elementwise, swiglu_elementwise_backward},
     },
     model_config::ModelConfig,
-    util::{finite_slice, random_f32},
+    util::{finite_slice, random_f32, tensor_stats},
 };
 
 #[derive(Default)]
@@ -85,6 +85,29 @@ impl Ffn {
 
         finite_slice("fwd:ffn:matmul_forward:y", &y);
 
+        // let pre_gate_s = tensor_stats(&cache.pre_gate);
+        // let up_s = tensor_stats(&cache.up);
+        // let swiglu_s = tensor_stats(&cache.swigle_out);
+        // let y_s = tensor_stats(&y);
+        // println!(
+        //     "ffn:fwd \
+        //     pre_gate_rms={:.4e} \
+        //     up_rms={:.4e} \
+        //     swiglu_rms={:.4e} \
+        //     y_rms={:.4e} \
+        //     pre_gate_max={:.4e} \
+        //     up_max={:.4e} \
+        //     swiglu_max={:.4e} \
+        //     y_max={:.4e}",
+        //     pre_gate_s.rms,
+        //     up_s.rms,
+        //     swiglu_s.rms,
+        //     y_s.rms,
+        //     pre_gate_s.max_abs,
+        //     up_s.max_abs,
+        //     swiglu_s.max_abs,
+        //     y_s.max_abs,
+        // );
         y
     }
 
@@ -152,7 +175,6 @@ impl Ffn {
     }
 
     // CPU リファレンス
-    #[cfg(test)]
     pub fn forward_cpu(
         &self,
         cfg: &ModelConfig,
@@ -175,7 +197,6 @@ impl Ffn {
         y
     }
 
-    #[cfg(test)]
     pub fn backward_cpu(
         &self,
         cfg: &ModelConfig,
@@ -614,5 +635,4 @@ mod test {
             "w_down gradient mismatch: analytic={analytic}, numerical={numerical}, rel_err={rel_err}"
         );
     }
-
 }

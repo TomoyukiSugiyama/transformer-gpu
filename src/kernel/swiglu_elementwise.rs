@@ -239,12 +239,10 @@ pub fn swiglu_elementwise_backward(
 }
 
 // CPU リファレンス
-#[cfg(test)]
 pub fn swish(x: f32) -> f32 {
     x / (1.0 + (-x).exp())
 }
 
-#[cfg(test)]
 pub fn elementwise_with<F: Fn(f32, f32) -> f32>(data: &[f32], other: &[f32], f: F) -> Vec<f32> {
     assert_eq!(
         data.len(),
@@ -261,12 +259,10 @@ pub fn elementwise_with<F: Fn(f32, f32) -> f32>(data: &[f32], other: &[f32], f: 
     y
 }
 
-#[cfg(test)]
 pub fn swiglu_elementwise_cpu(gate: &[f32], up: &[f32]) -> Vec<f32> {
     elementwise_with(gate, up, |g, u| swish(g) * u)
 }
 
-#[cfg(test)]
 pub fn swiglu_elementwise_backward_cpu(
     dy: &[f32],
     gate: &[f32],
