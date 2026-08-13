@@ -296,11 +296,11 @@ impl Trainer {
                 grads.scale(scale);
                 let clipped_grads = self.clip_grads(grads, self.tcfg.grad_clip);
                 // grad_scale = 1/valid_count、apply_grads 内の AdamW に反映
-                self.opt.set_grad_scale(valid_count);
+                // self.opt.set_grad_scale(valid_count);
 
                 self.apply_grads(model, &clipped_grads, lr);
             }
-            self.opt.reset_grad_scale();
+            // self.opt.reset_grad_scale();
 
             let avg_loss = total_loss / valid_count as f32;
             // ema_loss = alpha * ema_loss + (1 - alpha) * loss
