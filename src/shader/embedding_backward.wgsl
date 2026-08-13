@@ -34,11 +34,10 @@ fn embedding_backward(
     let id = token_ids[pos];
     let dst = id * d + j;
     
-    let val = dy[idx];
-    // atomicAdd(&dweight[dst], bitcast<i32>(val));
+    let scale = sqrt(f32(d));
 
     atomic_add_f32(
         dst,
-        dy[idx]
+        dy[idx] * scale
     );
 }

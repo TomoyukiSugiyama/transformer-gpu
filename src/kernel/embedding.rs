@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 const SIZE: u32 = 256;
 
 pub fn embedding(ctx: &GpuContext, token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f32> {
-    let seq_len = token_ids.len();
+    let seq_len = token_ids.len() as u32;
     let size = (token_ids.len() * d_model) as u32;
     let byte_size = (size * 4) as u64;
     let buf_token_ids = ctx
@@ -87,7 +87,7 @@ pub fn embedding(ctx: &GpuContext, token_ids: &[u32], weight: &[f32], d_model: u
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
-        pass.dispatch_workgroups(size.div_ceil(SIZE), 1, 1);
+        pass.dispatch_workgroups(seq_len.div_ceil(SIZE), 1, 1);
     }
 
     let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -230,11 +230,16 @@ pub fn embedding_backward(
 // CPU リファレンス
 #[cfg(test)]
 pub fn embedding_cpu(token_ids: &[u32], weight: &[f32], d_model: usize) -> Vec<f32> {
+    let scale = (d_model as f32).sqrt();
+
     token_ids
         .iter()
         .flat_map(|&id| {
             let start = id as usize * d_model;
-            weight[start..start + d_model].iter().copied()
+
+            weight[start..start + d_model]
+                .iter()
+                .map(move |&x| x * scale)
         })
         .collect()
 }
@@ -246,15 +251,30 @@ pub fn embedding_backward_cpu(
     vocab_size: usize,
     d_model: usize,
 ) -> Vec<f32> {
+    assert_eq!(
+        dy.len(),
+        token_ids.len() * d_model,
+        "dy length must be seq_len * d_model"
+    );
+
+    let scale = (d_model as f32).sqrt();
     let mut dweight = vec![0.0f32; vocab_size * d_model];
 
-    // dweight[t*d + j] = dy[pos*d + j]
-    // token_ids[pos] = t
     for (pos, &id) in token_ids.iter().enumerate() {
+        let id = id as usize;
+
+        assert!(
+            id < vocab_size,
+            "token id {} is out of range {}",
+            id,
+            vocab_size
+        );
+
         let src = pos * d_model;
-        let dst = id as usize * d_model;
+        let dst = id * d_model;
+
         for j in 0..d_model {
-            dweight[dst + j] += dy[src + j];
+            dweight[dst + j] += dy[src + j] * scale;
         }
     }
 
@@ -278,7 +298,9 @@ mod test {
         let ctx = GpuContext::new();
         let gpu = embedding(&ctx, &token_ids, &weight, d_model);
 
-        let exp = vec![3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let exp = vec![
+            4.2426405, 5.656854, 7.071068, 8.485281, 9.899495, 11.313708, 12.7279215, 14.142136,
+        ];
 
         assert_eq!(cpu, exp);
         assert_eq!(gpu, exp);
@@ -297,7 +319,10 @@ mod test {
 
         // dweight[t*d + j] = dy[pos*d + j]
         // token_ids[pos] = t
-        let exp = vec![0.0, 0.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let exp = vec![
+            0.0, 0.0, 4.2426405, 5.656854, 7.071068, 8.485281, 9.899495, 11.313708, 12.7279215,
+            14.142136,
+        ];
 
         assert_eq!(cpu, exp);
         assert_eq!(gpu, exp);

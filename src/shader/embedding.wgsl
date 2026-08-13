@@ -21,8 +21,9 @@ fn embedding(
 
     let token_id = token_ids[i];
     let d = dims.d_model;
+    let scale = sqrt(f32(d));
 
     for(var j: u32 = 0u; j < d; j++) {
-        out[i * d + j] = weight[token_id * d + j];
+        out[i * d + j] = weight[token_id * d + j] * scale;
     }
 }
