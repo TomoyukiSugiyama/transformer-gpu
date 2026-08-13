@@ -11,6 +11,7 @@ use crate::{
     lr_scheduler::{LrScheduleKind, LrScheduler},
     model::language_model::{LanguageModel, LanguageModelBackward, LanguageModelForwardCache},
     model_config::ModelConfig,
+    test_utils::assert_close,
     tokenizer::TokenizerKind,
     util::{dot, finite_slice, l2_norm, mean_and_std, require_finite, tensor_stats},
 };
@@ -99,17 +100,25 @@ impl Trainer {
         model: &LanguageModel,
         cfg: &ModelConfig,
         cache: &mut LanguageModelForwardCache,
+        cache_gpu: &mut LanguageModelForwardCache,
         input_ids: &[u32],
     ) -> Option<(f32, LanguageModelBackward)> {
         let seq = input_ids.len() - 1;
         let input = &input_ids[..seq];
         let target: Vec<usize> = input_ids[1..].iter().map(|&t| t as usize).collect();
 
-        // let logits = model.forward(ctx, cfg, input, cache);
+        let logits_gpu = model.forward(ctx, cfg, input, cache_gpu);
         let logits = model.forward_cpu(cfg, input, cache);
+        println!("logits");
+        assert_close(&logits_gpu, &logits, 1e-4, 1e-5);
+
         finite_slice("train:compute_grads:forward:logits", &logits);
         // let (loss, d_logits) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
         let (loss, d_logits) = cross_entropy_loss_cpu(&logits, &target, seq, cfg.vocab_size);
+        let (_, d_logits_gpu) = cross_entropy_loss(ctx,&logits, &target, seq, cfg.vocab_size);
+        println!("d_logits");
+        assert_close(&d_logits_gpu, &d_logits, 1e-4, 1e-5);
+
         finite_slice("train:compute_grads:forward:d_logits", &d_logits);
 
         if !loss.is_finite() {
@@ -117,12 +126,44 @@ impl Trainer {
         }
 
         let grads = model.backward_cpu(cfg, &d_logits, cache);
+        let grads_gpu = model.backward_cpu(cfg, &d_logits_gpu, cache_gpu);
+        println!("grads.dx");
+        assert_close(&grads_gpu.dx, &grads.dx, 1e-4, 1e-5);
+        println!("grads.d_embedding");
+        assert_close(&grads_gpu.d_embedding, &grads.d_embedding, 1e-4, 1e-5);
+        println!("grads.d_lm_head");
+        assert_close(&grads_gpu.d_lm_head, &grads.d_lm_head, 1e-4, 1e-5);
+        println!("grads.d_final_gamma");
+        assert_close(&grads_gpu.d_final_gamma, &grads.d_final_gamma, 1e-4, 1e-5);
 
         finite_slice("train:compute_grads:forward:grads:dx", &grads.dx);
         finite_slice(
             "train:compute_grads:forward:grads:d_embedding",
             &grads.d_embedding,
         );
+
+
+        for ((i,block), block_gpu) in grads.d_blocks.iter().enumerate().zip(grads_gpu.d_blocks.iter()) {
+            println!("d_blocks{i}:");
+            assert_close(&block_gpu.dx, &block.dx, 1e-4, 1e-5);
+            assert_close(&block_gpu.d_gamma_1, &block.d_gamma_1, 1e-4, 1e-5);
+            assert_close(&block_gpu.d_gamma_2, &block.d_gamma_2, 1e-4, 1e-5);
+            println!("d_blocks{i}::attn:");
+            let attn = &block.attn_backward;
+            let attn_gpu = &block_gpu.attn_backward;
+            assert_close(&attn_gpu.dx, &attn.dx, 1e-4, 1e-5);
+            assert_close(&attn_gpu.dw_q, &attn.dw_q, 1e-4, 1e-5);
+            assert_close(&attn_gpu.dw_k, &attn.dw_k, 1e-4, 1e-5);
+            assert_close(&attn_gpu.dw_v, &attn.dw_v, 1e-4, 1e-5);
+            assert_close(&attn_gpu.dw_o, &attn.dw_o, 1e-4, 1e-5);
+            println!("d_blocks{i}::ffn:");
+            let ffn = &block.ffn_backward;
+            let ffn_gpu = &block_gpu.ffn_backward;
+            assert_close(&ffn_gpu.dx, &ffn.dx, 1e-4, 1e-5);
+            assert_close(&ffn_gpu.dw_gate, &ffn.dw_gate, 1e-4, 1e-5);
+            assert_close(&ffn_gpu.dw_up, &ffn.dw_up, 1e-4, 1e-5);
+            assert_close(&ffn_gpu.dw_down, &ffn.dw_down, 1e-4, 1e-5);
+        }
 
         for (i, block) in grads.d_blocks.iter().enumerate() {
             finite_slice(
@@ -417,6 +458,7 @@ impl Trainer {
         );
 
         let mut cache = LanguageModelForwardCache::new(cfg.n_layers);
+        let mut cache_gpu = LanguageModelForwardCache::new(cfg.n_layers);
         println!(
             "# d_model={}, n_heads={}, n_kv_heads={}, d_ff={}, n_layers={}, max_seq_len={}, vocab_size={}, dropout={}",
             cfg.d_model,
@@ -464,7 +506,8 @@ impl Trainer {
             let mut valid_count = 0usize;
             for _ in 0..self.tcfg.batch_size {
                 let window = dataset.sample_window(Split::Train, self.tcfg.seq_len, &mut rng);
-                let Some((loss, grads)) = self.compute_grads(ctx, model, cfg, &mut cache, &window)
+                let Some((loss, grads)) =
+                    self.compute_grads(ctx, model, cfg, &mut cache, &mut cache_gpu, &window)
                 else {
                     accum_grads = None;
                     break;
@@ -621,6 +664,7 @@ mod tests {
         };
         let mut model = LanguageModel::new(&cfg);
         let mut cache = LanguageModelForwardCache::new(cfg.n_layers);
+        let mut cache_gpu = LanguageModelForwardCache::new(cfg.n_layers);
         let mut trainer = Trainer::new(TrainConfig {
             warmup_steps: 5,
             end_step: 20,
@@ -644,7 +688,9 @@ mod tests {
 
         let mut loss_before = 0.0f32;
         let mut accum_grads_before: Option<LanguageModelBackward> = None;
-        if let Some((loss, grads)) = trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &input) {
+        if let Some((loss, grads)) =
+            trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &mut cache_gpu, &input)
+        {
             loss_before = loss;
             match accum_grads_before.as_mut() {
                 Some(ag) => ag.add_assign(&grads),
@@ -662,7 +708,8 @@ mod tests {
 
             let mut accum_grads: Option<LanguageModelBackward> = None;
 
-            if let Some((_, grads)) = trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &input)
+            if let Some((_, grads)) =
+                trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &mut cache_gpu, &input)
             {
                 match accum_grads.as_mut() {
                     Some(ag) => ag.add_assign(&grads),
@@ -680,7 +727,9 @@ mod tests {
 
         let mut loss_after = 0.0f32;
         let mut accum_grads_after: Option<LanguageModelBackward> = None;
-        if let Some((loss, grads)) = trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &input) {
+        if let Some((loss, grads)) =
+            trainer.compute_grads(&ctx, &model, &cfg, &mut cache, &mut cache_gpu, &input)
+        {
             loss_after = loss;
             match accum_grads_after.as_mut() {
                 Some(ag) => ag.add_assign(&grads),

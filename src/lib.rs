@@ -12,6 +12,7 @@ pub mod model_config;
 pub mod tokenizer;
 pub mod train;
 pub mod util;
+pub mod test_utils;
 
-#[cfg(test)]
-mod test_utils;
+// #[cfg(test)]
+// mod test_utils;
