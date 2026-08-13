@@ -30,7 +30,7 @@ fn rms_norm(
         sum += v * v;
         i += WG; // +128
     }
-    // tile[0] ~ tile[WG-1] 各タイルに4個分の和が含まれる
+    // tile[0] ~ tile[WG-1] 各タイルに8個分の和が含まれる
     tile[lid.x] = sum;
 
     workgroupBarrier();
