@@ -3,13 +3,27 @@ use wgpu::util::DeviceExt;
 use crate::gpu_context::GpuContext;
 
 pub fn rms_norm(ctx: &GpuContext, x: &[f32], gamma: &[f32], eps: f32, d_model: u32) -> Vec<f32> {
-    assert_eq!(
-        x.len() as u32 % d_model,
-        0,
-        "x.len() must be divisible by d_model"
-    );
-    let seq = x.len() as u32 / d_model;
-    let byte_size = (seq * d_model * 4) as u64;
+    assert!(d_model > 0, "d_model must be > 0");
+    assert!(eps >= 0.0, "eps must be >= 0");
+
+    let d = d_model as usize;
+
+    assert_eq!(gamma.len(), d, "gamma length must equal d_model");
+
+    assert_eq!(x.len() % d, 0, "x.len() must be divisible by d_model");
+
+    if x.is_empty() {
+        return Vec::new();
+    }
+
+    let seq = x.len() / d;
+
+    let seq_u32 = u32::try_from(seq).expect("seq exceeds u32 range");
+
+    let byte_size = x
+        .len()
+        .checked_mul(std::mem::size_of::<f32>())
+        .expect("buffer size overflow") as u64;
     let buf_x = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -90,7 +104,7 @@ pub fn rms_norm(ctx: &GpuContext, x: &[f32], gamma: &[f32], eps: f32, d_model: u
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
-        pass.dispatch_workgroups(seq, 1, 1);
+        pass.dispatch_workgroups(seq_u32, 1, 1);
     }
 
     let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -121,13 +135,29 @@ pub fn rms_norm_backward(
     eps: f32,
     d_model: u32,
 ) -> (Vec<f32>, Vec<f32>) {
-    assert_eq!(
-        x.len() as u32 % d_model,
-        0,
-        "x.len() must be divisible by d_model"
-    );
-    let seq = x.len() as u32 / d_model;
-    let byte_size = (seq * d_model * 4) as u64;
+    assert!(d_model > 0, "d_model must be > 0");
+    assert!(eps >= 0.0, "eps must be >= 0");
+
+    let d = d_model as usize;
+
+    assert_eq!(x.len() % d, 0, "x.len() must be divisible by d_model");
+
+    assert_eq!(dy.len(), x.len(), "dy and x must have the same length");
+
+    assert_eq!(gamma.len(), d, "gamma length must equal d_model");
+
+    if x.is_empty() {
+        return (Vec::new(), vec![0.0; d]);
+    }
+
+    let seq = x.len() / d;
+
+    let seq_u32 = u32::try_from(seq).expect("seq exceeds u32 range");
+
+    let byte_size = x
+        .len()
+        .checked_mul(std::mem::size_of::<f32>())
+        .expect("buffer size overflow") as u64;
     let buf_dy = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -229,7 +259,7 @@ pub fn rms_norm_backward(
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
-        pass.dispatch_workgroups(seq, 1, 1);
+        pass.dispatch_workgroups(seq_u32, 1, 1);
     }
 
     let dx_buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -276,10 +306,10 @@ pub fn rms_norm_backward(
     //         dgamma[i] += dg_i;
     //     });
     // });
-    let mut dgamma = vec![0.0f32; d_model as usize];
+    let mut dgamma = vec![0.0f32; d];
     for row in 0..seq {
-        let base = (row * d_model) as usize;
-        let rms = (x[base..base + d_model as usize]
+        let base = (row * d) as usize;
+        let rms = (x[base..base + d]
             .iter()
             .map(|v| v * v)
             .sum::<f32>()
@@ -287,7 +317,7 @@ pub fn rms_norm_backward(
             + eps)
             .sqrt();
         let inv_rms = 1.0 / rms;
-        for i in 0..d_model as usize {
+        for i in 0..d {
             dgamma[i] += dy[base + i] * x[base + i] * inv_rms;
         }
     }
