@@ -3,17 +3,32 @@ use wgpu::util::DeviceExt;
 use crate::gpu_context::GpuContext;
 
 pub fn create_table(d_head: usize, max_len: usize, base: f32) -> (Vec<f32>, Vec<f32>) {
+    assert!(d_head > 0, "d_head must be > 0");
+    assert!(d_head % 2 == 0, "d_head must be even for RoPE");
+    assert!(max_len > 0, "max_len must be > 0");
+    assert!(
+        base.is_finite() && base > 0.0,
+        "base must be finite and > 0"
+    );
+
     let half = d_head / 2;
-    let mut cos_table: Vec<f32> = vec![0.0; max_len * half];
-    let mut sin_table: Vec<f32> = vec![0.0; max_len * half];
+    let size = max_len.checked_mul(half).expect("RoPE table size overflow");
+
+    let mut cos_table = vec![0.0f32; size];
+    let mut sin_table = vec![0.0f32; size];
+
     for pos in 0..max_len {
         for i in 0..half {
             let theta = (base as f64).powf(-2.0 * i as f64 / d_head as f64);
+
             let angle = pos as f64 * theta;
-            cos_table[pos * half + i] = angle.cos() as f32;
-            sin_table[pos * half + i] = angle.sin() as f32;
+            let index = pos * half + i;
+
+            cos_table[index] = angle.cos() as f32;
+            sin_table[index] = angle.sin() as f32;
         }
     }
+
     (cos_table, sin_table)
 }
 
@@ -24,26 +39,45 @@ pub fn rope(
     cos_table: &[f32],
     sin_table: &[f32],
 ) -> Vec<f32> {
+    assert!(d_head > 0, "d_head must be > 0");
     assert!(d_head % 2 == 0, "d_head must be even for RoPE");
+
     assert_eq!(x.len() % d_head, 0, "x.len() must be divisible by d_head");
+
+    if x.is_empty() {
+        return Vec::new();
+    }
+
+    let seq = x.len() / d_head;
     let half = d_head / 2;
-    assert_eq!(
-        cos_table.len() % half,
-        0,
-        "cos_table.len() must be divisible by d_head/2"
-    );
-    assert_eq!(
-        sin_table.len() % half,
-        0,
-        "sin_table.len() must be divisible by d_head/2"
-    );
+
     assert_eq!(
         cos_table.len(),
         sin_table.len(),
-        "cos_table and sin_table must have the same length"
+        "cos_table and sin_table must have same length"
     );
-    let size = x.len() as u32;
-    let byte_size = (size * 4) as u64;
+
+    assert_eq!(
+        cos_table.len() % half,
+        0,
+        "RoPE table length must be divisible by d_head / 2"
+    );
+
+    let required = seq
+        .checked_mul(half)
+        .expect("RoPE table required size overflow");
+
+    assert!(
+        cos_table.len() >= required,
+        "RoPE table is too short: need {}, got {}",
+        required,
+        cos_table.len()
+    );
+
+    let byte_size = x
+        .len()
+        .checked_mul(std::mem::size_of::<f32>())
+        .expect("RoPE buffer size overflow") as u64;
     let buf_x = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -166,24 +200,31 @@ pub fn rope_backward(
     cos_table: &[f32],
     sin_table: &[f32],
 ) -> Vec<f32> {
+    assert!(d_head > 0, "d_head must be > 0");
     assert!(d_head % 2 == 0, "d_head must be even for RoPE");
-    assert_eq!(dy.len() % d_head, 0, "x.len() must be divisible by d_head");
+
+    assert_eq!(dy.len() % d_head, 0, "dy.len() must be divisible by d_head");
+
+    if dy.is_empty() {
+        return Vec::new();
+    }
+
+    let seq = dy.len() / d_head;
     let half = d_head / 2;
-    assert_eq!(
-        cos_table.len() % half,
-        0,
-        "cos_table.len() must be divisible by d_head/2"
-    );
-    assert_eq!(
-        sin_table.len() % half,
-        0,
-        "sin_table.len() must be divisible by d_head/2"
-    );
+
     assert_eq!(
         cos_table.len(),
         sin_table.len(),
-        "cos_table and sin_table must have the same length"
+        "cos_table and sin_table must have same length"
     );
+
+    assert_eq!(
+        cos_table.len() % half,
+        0,
+        "RoPE table length must be divisible by d_head / 2"
+    );
+
+    assert!(cos_table.len() >= seq * half, "RoPE table is too short");
     let size = dy.len() as u32;
     let byte_size = (size * 4) as u64;
     let buf_dy = ctx
