@@ -5,8 +5,23 @@ use crate::gpu_context::GpuContext;
 const SIZE: u32 = 256;
 
 pub fn swiglu_elementwise(ctx: &GpuContext, gate: &[f32], up: &[f32]) -> Vec<f32> {
-    let size = gate.len() as u32;
-    let byte_size = (size * 4) as u64;
+    assert_eq!(
+        gate.len(),
+        up.len(),
+        "gate and up must have the same length"
+    );
+
+    if gate.is_empty() {
+        return Vec::new();
+    }
+
+    let size = gate.len();
+
+    let size_u32 = u32::try_from(size).expect("SwiGLU input is too large");
+
+    let byte_size = size
+        .checked_mul(std::mem::size_of::<f32>())
+        .expect("SwiGLU buffer size overflow") as u64;
     let buf_gate = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -87,7 +102,7 @@ pub fn swiglu_elementwise(ctx: &GpuContext, gate: &[f32], up: &[f32]) -> Vec<f32
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
-        pass.dispatch_workgroups(size.div_ceil(SIZE), 1, 1);
+        pass.dispatch_workgroups(size_u32.div_ceil(SIZE), 1, 1);
     }
 
     let buf_read = ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -107,7 +122,13 @@ pub fn swiglu_elementwise(ctx: &GpuContext, gate: &[f32], up: &[f32]) -> Vec<f32
         .unwrap();
 
     let data = slice.get_mapped_range();
-    bytemuck::allocation::pod_collect_to_vec(&data)
+
+    let result = bytemuck::allocation::pod_collect_to_vec(&data);
+
+    drop(data);
+    buf_read.unmap();
+
+    result
 }
 
 pub fn swiglu_elementwise_backward(
@@ -116,9 +137,28 @@ pub fn swiglu_elementwise_backward(
     gate: &[f32],
     up: &[f32],
 ) -> (Vec<f32>, Vec<f32>) {
+    assert_eq!(
+        dy.len(),
+        gate.len(),
+        "dy and gate must have the same length"
+    );
+
+    assert_eq!(dy.len(), up.len(), "dy and up must have the same length");
+
+    if dy.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let n: usize = dy.len();
+
+    let output_len = n
+        .checked_mul(2)
+        .expect("SwiGLU backward output size overflow");
+
+    let byte_size = output_len
+        .checked_mul(std::mem::size_of::<f32>())
+        .expect("SwiGLU backward buffer size overflow") as u64;
     let dy_size = dy.len() as u32;
-    let size = 2 * dy_size as u32;
-    let byte_size = (size * 4) as u64;
 
     let buf_dy = ctx
         .device
@@ -231,10 +271,15 @@ pub fn swiglu_elementwise_backward(
         .unwrap();
 
     let data = slice.get_mapped_range();
+
     let out: Vec<f32> = bytemuck::allocation::pod_collect_to_vec(&data);
 
-    let d_gate: Vec<f32> = out[..dy_size as usize].to_vec();
-    let d_up: Vec<f32> = out[dy_size as usize..].to_vec();
+    drop(data);
+    buf_read.unmap();
+
+    let d_gate = out[..n].to_vec();
+    let d_up = out[n..2 * n].to_vec();
+
     (d_gate, d_up)
 }
 
