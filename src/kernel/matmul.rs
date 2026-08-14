@@ -14,6 +14,22 @@ fn matmul(
     trans_a: bool,
     trans_b: bool,
 ) -> Vec<f32> {
+    let a_rows = if trans_a { k } else { m };
+    let a_cols = if trans_a { m } else { k };
+
+    let b_rows = if trans_b { n } else { k };
+    let b_cols = if trans_b { k } else { n };
+    let op_a_rows = if trans_a { a_cols } else { a_rows };
+    let op_a_cols = if trans_a { a_rows } else { a_cols };
+
+    let op_b_rows = if trans_b { b_cols } else { b_rows };
+    let op_b_cols = if trans_b { b_rows } else { b_cols };
+
+    assert_eq!(
+        op_a_cols, op_b_rows,
+        "inner dimension mismatch: op(A) ({}, {}), op(B) ({}, {})",
+        op_a_rows, op_a_cols, op_b_rows, op_b_cols
+    );
     let byte_size = (m * n * 4) as u64;
     let buf_a = ctx
         .device
@@ -219,11 +235,18 @@ mod tests {
     fn test_trans_a() {
         let (m, k, n) = (3, 5, 7);
         let scale = 0.1f32;
-        let a = random_f32(m * k, 42, scale);
+
+        // op(A) = A^T: [m × k]
+        // 元Aは [k × m]
+        let a = random_f32(k * m, 42, scale);
+
+        // Bは [k × n]
         let b = random_f32(k * n, 43, scale);
 
         let cpu = matmul_cpu(&a, &b, m, k, n, true, false);
+
         let ctx = GpuContext::new();
+
         let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, true, false);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
@@ -233,11 +256,18 @@ mod tests {
     fn test_trans_b() {
         let (m, k, n) = (3, 5, 7);
         let scale = 0.1f32;
+
+        // Aは [m × k]
         let a = random_f32(m * k, 42, scale);
-        let b = random_f32(k * n, 43, scale);
+
+        // op(B) = B^T: [k × n]
+        // 元Bは [n × k]
+        let b = random_f32(n * k, 43, scale);
 
         let cpu = matmul_cpu(&a, &b, m, k, n, false, true);
+
         let ctx = GpuContext::new();
+
         let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, false, true);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
@@ -247,11 +277,17 @@ mod tests {
     fn test_trans_ab() {
         let (m, k, n) = (3, 5, 7);
         let scale = 0.1f32;
-        let a = random_f32(m * k, 42, scale);
-        let b = random_f32(k * n, 43, scale);
+
+        // 元Aは [k × m]
+        let a = random_f32(k * m, 42, scale);
+
+        // 元Bは [n × k]
+        let b = random_f32(n * k, 43, scale);
 
         let cpu = matmul_cpu(&a, &b, m, k, n, true, true);
+
         let ctx = GpuContext::new();
+
         let gpu = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, true, true);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);

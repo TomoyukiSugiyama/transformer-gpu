@@ -8,15 +8,24 @@ struct Dims {
     trans_b: u32,
 }
 
-@group(0) @binding(0) var<storage, read> A: array<f32>;
-@group(0) @binding(1) var<storage, read> B: array<f32>;
-@group(0) @binding(2) var<storage, read_write> C: array<f32>;
-@group(0) @binding(3) var<uniform> dims: Dims;
+@group(0) @binding(0)
+var<storage, read> A: array<f32>;
+
+@group(0) @binding(1)
+var<storage, read> B: array<f32>;
+
+@group(0) @binding(2)
+var<storage, read_write> C: array<f32>;
+
+@group(0) @binding(3)
+var<uniform> dims: Dims;
 
 var<workgroup> tileA: array<array<f32, TILE>, TILE>;
 var<workgroup> tileB: array<array<f32, TILE>, TILE>;
 
-@compute @workgroup_size(TILE, TILE, 1)
+
+@compute
+@workgroup_size(TILE, TILE, 1)
 fn matmul(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
@@ -24,47 +33,74 @@ fn matmul(
     let row = gid.y;
     let col = gid.x;
 
-    var acc: f32 = 0.0;
-    let num_tiles = (dims.K + TILE - 1u) / TILE;
-    let trans_a = dims.trans_a == 1u;
-    let trans_b = dims.trans_b == 1u;
+    let trans_a = dims.trans_a != 0u;
+    let trans_b = dims.trans_b != 0u;
 
-    let dim_c_row = dims.M;
-    let dim_c_col = dims.N;
-    var dim_ab_stride = dims.K;
+    let m = dims.M;
+    let k = dims.K;
+    let n = dims.N;
 
-    let a_rows = select(dim_c_row,dim_ab_stride, trans_a);
-    let a_cols = select(dim_ab_stride, dim_c_row, trans_a);
+    // 元配列のrow-major shape
+    let a_rows = select(m, k, trans_a);
+    let a_cols = select(k, m, trans_a);
 
-    let b_rows = select(dim_ab_stride, dim_c_col, trans_b);
-    let b_cols = select(dim_c_col, dim_ab_stride, trans_b);
+    let b_rows = select(k, n, trans_b);
+    let b_cols = select(n, k, trans_b);
 
-    let a_col_idx = lid.x;
-    let b_row_idx = lid.y;
-    for(var t: u32 = 0u; t < num_tiles; t++) {
-        let a_r = select(row, t * TILE + a_col_idx, trans_a);
-        let a_c = select(t * TILE + a_col_idx, row, trans_a);
+    var acc = 0.0;
+    let num_tiles = (k + TILE - 1u) / TILE;
 
-        tileA[lid.y][lid.x] = select(0.0, A[a_r * a_cols + a_c],
-            a_r < a_rows &&
-            a_c < a_cols);
+    for (var t: u32 = 0u; t < num_tiles; t++) {
+        let a_r = select(
+            row,
+            t * TILE + lid.x,
+            trans_a
+        );
 
-        let b_r = select(t * TILE + b_row_idx, col, trans_b);
-        let b_c = select(col, t * TILE + b_row_idx, trans_b);
-        tileB[lid.y][lid.x] = select(0.0, B[b_r * b_cols + b_c],
-            b_r < b_rows &&
-            b_c < b_cols);
+        let a_c = select(
+            t * TILE + lid.x,
+            row,
+            trans_a
+        );
+
+        if (a_r < a_rows && a_c < a_cols) {
+            tileA[lid.y][lid.x] =
+                A[a_r * a_cols + a_c];
+        } else {
+            tileA[lid.y][lid.x] = 0.0;
+        }
+
+        let b_r = select(
+            t * TILE + lid.y,
+            col,
+            trans_b
+        );
+
+        let b_c = select(
+            col,
+            t * TILE + lid.y,
+            trans_b
+        );
+
+        if (b_r < b_rows && b_c < b_cols) {
+            tileB[lid.y][lid.x] =
+                B[b_r * b_cols + b_c];
+        } else {
+            tileB[lid.y][lid.x] = 0.0;
+        }
 
         workgroupBarrier();
 
-        for(var i: u32 = 0u; i < TILE; i++) {
-            acc += tileA[lid.y][i] * tileB[i][lid.x];
+        for (var p: u32 = 0u; p < TILE; p++) {
+            acc +=
+                tileA[lid.y][p] *
+                tileB[p][lid.x];
         }
 
         workgroupBarrier();
     }
 
-    if (row < dim_c_row && col < dim_c_col) {
-        C[row * dim_c_col + col] = acc;
+    if (row < m && col < n) {
+        C[row * n + col] = acc;
     }
 }
