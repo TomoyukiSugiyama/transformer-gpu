@@ -161,7 +161,7 @@ impl LanguageModel {
 
         cache.token_ids = token_ids.to_vec();
 
-        let mut x = embedding(ctx, token_ids, &self.embedding, cfg.d_model);
+        let mut x = embedding(ctx, token_ids, &self.embedding, cfg.vocab_size, cfg.d_model);
         cache.x0 = x.clone();
 
         self.blocks
@@ -258,7 +258,7 @@ impl LanguageModel {
 
         cache.token_ids = token_ids.to_vec();
 
-        let mut x = embedding_cpu(token_ids, &self.embedding, cfg.d_model);
+        let mut x = embedding_cpu(token_ids, &self.embedding, cfg.vocab_size, cfg.d_model);
         cache.x0 = x.clone();
 
         self.blocks
