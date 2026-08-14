@@ -55,11 +55,19 @@ impl Attention {
         sin_table: &[f32],
         cache: &mut AttentionForwardCache,
     ) -> Vec<f32> {
-        assert!(
-            cfg.d_model % cfg.n_heads == 0,
-            "d_model must to divisible by n_heads"
+        assert!(cfg.d_model > 0);
+        assert!(cfg.n_heads > 0);
+        assert_eq!(
+            cfg.d_model % cfg.n_heads,
+            0,
+            "d_model must be divisible by n_heads"
         );
-        assert!(cfg.n_heads > 0, "n_heads must be > 0");
+
+        assert_eq!(
+            x.len() % cfg.d_model,
+            0,
+            "x length must be divisible by d_model"
+        );
         let seq = x.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
@@ -152,6 +160,20 @@ impl Attention {
         sin_table: &[f32],
         cache: &mut AttentionForwardCache,
     ) -> AttentionBackward {
+        assert!(cfg.d_model > 0);
+        assert!(cfg.n_heads > 0);
+
+        assert_eq!(
+            dy.len() % cfg.d_model,
+            0,
+            "dy length must be divisible by d_model"
+        );
+
+        assert_eq!(
+            dy.len(),
+            cache.x.len(),
+            "dy and cached x must have the same length"
+        );
         let seq = dy.len() / cfg.d_model;
         let d_head = cfg.d_head();
 
