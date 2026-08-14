@@ -48,6 +48,33 @@ impl Ffn {
         x: &[f32],
         cache: &mut FfnForwardCache,
     ) -> Vec<f32> {
+        assert!(cfg.d_model > 0, "d_model must be > 0");
+        assert!(cfg.d_ff > 0, "d_ff must be > 0");
+
+        assert_eq!(
+            x.len() % cfg.d_model,
+            0,
+            "x length must be divisible by d_model"
+        );
+
+        assert!(!x.is_empty(), "x must not be empty");
+        assert_eq!(
+            self.w_gate.len(),
+            cfg.d_model * cfg.d_ff,
+            "w_gate shape mismatch"
+        );
+
+        assert_eq!(
+            self.w_up.len(),
+            cfg.d_model * cfg.d_ff,
+            "w_up shape mismatch"
+        );
+
+        assert_eq!(
+            self.w_down.len(),
+            cfg.d_ff * cfg.d_model,
+            "w_down shape mismatch"
+        );
         let seq = x.len() / cfg.d_model;
         cache.x_in = x.to_vec();
         cache.pre_gate = matmul_forward(
@@ -88,6 +115,36 @@ impl Ffn {
         dy: &[f32],
         cache: &mut FfnForwardCache,
     ) -> FfnBackward {
+        assert!(cfg.d_model > 0, "d_model must be > 0");
+        assert!(cfg.d_ff > 0, "d_ff must be > 0");
+
+        assert_eq!(
+            dy.len() % cfg.d_model,
+            0,
+            "dy length must be divisible by d_model"
+        );
+
+        assert_eq!(
+            dy.len(),
+            cache.x_in.len(),
+            "dy length must equal cached input length"
+        );
+
+        let seq = dy.len() / cfg.d_model;
+
+        assert_eq!(
+            cache.pre_gate.len(),
+            seq * cfg.d_ff,
+            "cached pre_gate shape mismatch"
+        );
+
+        assert_eq!(cache.up.len(), seq * cfg.d_ff, "cached up shape mismatch");
+
+        assert_eq!(
+            cache.swigle_out.len(),
+            seq * cfg.d_ff,
+            "cached swigle_out shape mismatch"
+        );
         let seq = dy.len() / cfg.d_model;
 
         // da = dy @ w_down^T # (seq, d_ff)
