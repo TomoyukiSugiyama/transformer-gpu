@@ -1,129 +1,189 @@
-const Br: u32 = 64u;
-const Bc: u32 = 16u;
+const BR: u32 = 64u;
+const BC: u32 = 16u;
 const MAX_D_HEAD: u32 = 128u;
+const NEG_INF: f32 = -3.402823466e+38;
 
-struct faDims {
+struct FaDims {
     seq: u32,
     d_head: u32,
 }
 
-@group(0) @binding(0) var<storage, read> fa_q: array<f32>;
-@group(0) @binding(1) var<storage, read> fa_k: array<f32>;
-@group(0) @binding(2) var<storage, read> fa_v: array<f32>;
-@group(0) @binding(3) var<storage, read_write> fa_scores: array<f32>; // O: [seq*d_head] + L: [seq]
-@group(0) @binding(4) var<uniform> fa_dims: faDims;
+@group(0) @binding(0)
+var<storage, read> fa_q: array<f32>;
 
-var<workgroup> tile_q: array<f32, Br * MAX_D_HEAD>; // [Br][d_head]
-var<workgroup> tile_k: array<f32, Bc * MAX_D_HEAD>; // [Bc][d_head]
-var<workgroup> tile_v: array<f32, Bc * MAX_D_HEAD>; // [Bc][d_head]
+@group(0) @binding(1)
+var<storage, read> fa_k: array<f32>;
 
-@compute @workgroup_size(Br, 1, 1)
+@group(0) @binding(2)
+var<storage, read> fa_v: array<f32>;
+
+@group(0) @binding(3)
+var<storage, read_write> fa_out_lse: array<f32>;
+// layout:
+//   fa_out_lse[0 .. seq*d_head]       = output O
+//   fa_out_lse[seq*d_head .. seq*d_head+seq] = LSE
+
+@group(0) @binding(4)
+var<uniform> fa_dims: FaDims;
+
+var<workgroup> tile_q: array<f32, BR * MAX_D_HEAD>;
+var<workgroup> tile_k: array<f32, BC * MAX_D_HEAD>;
+var<workgroup> tile_v: array<f32, BC * MAX_D_HEAD>;
+
+
+@compute
+@workgroup_size(BR, 1, 1)
 fn flash_attention(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
-    let d_head = fa_dims.d_head;
     let seq = fa_dims.seq;
-    let row = wid.x * Br + lid.x;
+    let d_head = fa_dims.d_head;
+
+    let row = wid.x * BR + lid.x;
     let in_range = row < seq;
 
-    var m_old = -3.4e38; // max
-    var l_old = 0.0; // sum
-    var o: array<f32, MAX_D_HEAD>; // output
-
-    let num_col_tiles = (seq + Bc - 1u) / Bc;
-    // 1 / √d_k
     let scale = 1.0 / sqrt(f32(d_head));
+    let num_col_tiles = (seq + BC - 1u) / BC;
 
+    var m_old = NEG_INF;
+    var l_old = 0.0;
+    var o: array<f32, MAX_D_HEAD>;
+
+    // 未初期化読み出しを防ぐ
+    for (var d: u32 = 0u; d < MAX_D_HEAD; d++) {
+        o[d] = 0.0;
+    }
+
+    // Query tileのロード
     if in_range {
-        // tile_q にロード
         for (var d: u32 = 0u; d < d_head; d++) {
-            tile_q[lid.x * d_head + d] = fa_q[row * d_head + d];
+            tile_q[lid.x * d_head + d] =
+                fa_q[row * d_head + d];
+        }
+    } else {
+        // barrier前に共有領域を初期化しておく
+        for (var d: u32 = 0u; d < d_head; d++) {
+            tile_q[lid.x * d_head + d] = 0.0;
         }
     }
 
     workgroupBarrier();
 
-    for(var t: u32 = 0u; t < num_col_tiles; t++) {
-        let base_k = t * Bc;
+    for (var t: u32 = 0u; t < num_col_tiles; t++) {
+        let base_k = t * BC;
 
-        // tile_k, tile_v にロード
-        var i = lid.x;
+        // K/V tileのロード
+        var load_idx = lid.x;
+
         loop {
-            if i >= Bc * d_head { break; }
-            let k_row = base_k + i / d_head;
-            let d = i % d_head;
-            if k_row < seq {
-                tile_k[i] = fa_k[k_row * d_head + d];
-                tile_v[i] = fa_v[k_row * d_head + d];
-            }else{
-                tile_k[i] = 0.0;
-                tile_v[i] = 0.0;
+            if load_idx >= BC * d_head {
+                break;
             }
-            i += Br;
+
+            let k_row = base_k + load_idx / d_head;
+            let d = load_idx % d_head;
+
+            if k_row < seq {
+                tile_k[load_idx] =
+                    fa_k[k_row * d_head + d];
+
+                tile_v[load_idx] =
+                    fa_v[k_row * d_head + d];
+            } else {
+                tile_k[load_idx] = 0.0;
+                tile_v[load_idx] = 0.0;
+            }
+
+            load_idx += BR;
         }
 
         workgroupBarrier();
 
         if in_range {
-            // 1. Q[row] · K[t*Bc..(t+1)*Bc]^T / √d_k を計算, causal mask → s (スコア)
-            var s: array<f32, Bc>;
-            for(var j: u32 = 0u; j < Bc; j++) {
+            var score: array<f32, BC>;
+            var valid: array<bool, BC>;
+
+            // Q[row] · K[j] / sqrt(d_head)
+            for (var j: u32 = 0u; j < BC; j++) {
                 let k_row = base_k + j;
-                s[j] = -3.4e38;
-                // causal mask
-                if k_row < seq && k_row <= row {
-                    s[j] = 0.0;
-                    for(var d: u32 = 0u; d < d_head; d++) {
-                        s[j] += 
-                        tile_q[lid.x * d_head + d] * 
-                        tile_k[j * d_head + d];
+
+                valid[j] =
+                    k_row < seq &&
+                    k_row <= row;
+
+                if valid[j] {
+                    var dot = 0.0;
+
+                    for (var d: u32 = 0u; d < d_head; d++) {
+                        dot +=
+                            tile_q[lid.x * d_head + d] *
+                            tile_k[j * d_head + d];
                     }
-                    s[j] *= scale;
+
+                    score[j] = dot * scale;
+                } else {
+                    score[j] = 0.0;
                 }
             }
 
-            // 2. online softmax で m, l, o を更新
-            // https://courses.cs.washington.edu/courses/cse599m/23sp/notes/flashattn.pdf
-            // m_new = max(m_old, max(タイルt))
+            // 有効要素だけでtile内最大値を計算
             var m_new = m_old;
-            for(var j: u32 = 0u; j < Bc; j++) {
-                if s[j] > m_new { m_new = s[j]; }
-            }
 
-            // l_new = l_old * exp(m_old - m_new) + sum(exp(タイルt - m_new))
-            let correction = exp(m_old - m_new);
-            var l_new = l_old * correction;
-            for(var j: u32 = 0u; j < Bc; j++) {
-                l_new += exp(s[j] - m_new);
-            }
-
-            // o = (o * l_old * exp(m_old - m_new) + sum(exp(タイルt - m_new) * V_t)) / l_new
-            for(var d: u32 = 0u; d < d_head; d++) {
-                o[d] = o[d] * l_old * correction;
-                for(var j: u32 = 0u; j < Bc; j++) {
-                    let k_row = base_k + j;
-                    if k_row < seq {
-                        o[d] += exp(s[j] - m_new)
-                                * tile_v[j * d_head + d];
+            for (var j: u32 = 0u; j < BC; j++) {
+                if valid[j] {
+                    if score[j] > m_new {
+                        m_new = score[j];
                     }
                 }
-                o[d] /= l_new;
+            }
+
+            // causal attentionではrow >= 0なので、
+            // 少なくとも1つは有効要素が存在する
+            let correction = exp(m_old - m_new);
+
+            var l_new =
+                l_old * correction;
+
+            for (var j: u32 = 0u; j < BC; j++) {
+                if valid[j] {
+                    l_new += exp(score[j] - m_new);
+                }
+            }
+
+            // 出力の更新
+            for (var d: u32 = 0u; d < d_head; d++) {
+                var acc =
+                    o[d] * l_old * correction;
+
+                for (var j: u32 = 0u; j < BC; j++) {
+                    if valid[j] {
+                        let p =
+                            exp(score[j] - m_new);
+
+                        acc +=
+                            p * tile_v[j * d_head + d];
+                    }
+                }
+
+                o[d] = acc / l_new;
             }
 
             m_old = m_new;
             l_old = l_new;
-
         }
 
+        // 次のtileがtile_k/tile_vを上書きする前に同期
         workgroupBarrier();
     }
 
     if in_range {
-        for(var d: u32 = 0u; d < d_head; d++){
-            fa_scores[row * d_head + d] = o[d];
-            // L[i] = m_i + log(l_i)
-            fa_scores[seq * d_head + row] = m_old + log(l_old);
+        for (var d: u32 = 0u; d < d_head; d++) {
+            fa_out_lse[row * d_head + d] = o[d];
         }
+
+        // LSEは一度だけ書く
+        fa_out_lse[seq * d_head + row] =
+            m_old + log(l_old);
     }
 }

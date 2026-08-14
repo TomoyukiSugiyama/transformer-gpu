@@ -155,6 +155,9 @@ pub fn attention_backward(
     d_head: u32,
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let n = (seq * d_head) as usize;
+    assert!(seq > 0);
+    assert!(d_head <= BR);
+    assert!(d_head <= MAX_D_HEAD);
 
     // D[i] = rowsum(o[i] * do_[i]) を事前計算
     let d_vec: Vec<f32> = (0..seq as usize)
