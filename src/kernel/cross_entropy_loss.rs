@@ -8,6 +8,24 @@ pub fn cross_entropy_loss(
     seq: usize,
     vocab_size: usize,
 ) -> (f32, Vec<f32>) {
+    assert!(seq > 0, "seq must be > 0");
+    assert!(vocab_size > 0, "vocab_size must be > 0");
+
+    assert_eq!(
+        logits.len(),
+        seq * vocab_size,
+        "logits length must be seq * vocab_size"
+    );
+
+    assert_eq!(targets.len(), seq, "targets length must be seq");
+    for (row, &target) in targets.iter().enumerate() {
+        assert!(
+            target < vocab_size,
+            "targets[{row}]={target} is out of range 0..{}",
+            vocab_size
+        );
+    }
+
     let grad_size = (seq * vocab_size) as u32;
     let grad_byte_size = (grad_size * 4) as u64;
     let losses_byte_size = (seq * 4) as u64;
