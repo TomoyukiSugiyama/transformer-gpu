@@ -156,6 +156,42 @@ impl LanguageModel {
         token_ids: &[u32],
         cache: &mut LanguageModelForwardCache,
     ) -> Vec<f32> {
+        assert!(cfg.d_model > 0);
+        assert!(cfg.d_ff > 0);
+        assert!(cfg.vocab_size > 0);
+        assert!(cfg.n_layers > 0);
+        assert!(cfg.n_heads > 0);
+
+        assert_eq!(
+            cfg.d_model % cfg.n_heads,
+            0,
+            "d_model must be divisible by n_heads"
+        );
+
+        assert_eq!(
+            self.blocks.len(),
+            cfg.n_layers,
+            "model layer count mismatch"
+        );
+
+        assert_eq!(
+            cache.blocks.len(),
+            cfg.n_layers,
+            "cache layer count mismatch"
+        );
+
+        assert!(!token_ids.is_empty(), "token_ids must not be empty");
+
+        for (i, &token_id) in token_ids.iter().enumerate() {
+            assert!(
+                (token_id as usize) < cfg.vocab_size,
+                "token_ids[{i}]={token_id} out of range"
+            );
+        }
+
+        assert_eq!(self.embedding.len(), cfg.vocab_size * cfg.d_model);
+
+        assert_eq!(self.lm_head.len(), cfg.d_model * cfg.vocab_size);
         let seq = token_ids.len();
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
 
@@ -194,6 +230,40 @@ impl LanguageModel {
         cache: &mut LanguageModelForwardCache,
     ) -> LanguageModelBackward {
         let seq = cache.token_ids.len();
+
+        assert!(seq > 0);
+
+        assert_eq!(
+            d_logits.len(),
+            seq * cfg.vocab_size,
+            "d_logits must be seq * vocab_size"
+        );
+
+        assert_eq!(cache.x0.len(), seq * cfg.d_model, "cache.x0 shape mismatch");
+
+        assert_eq!(
+            cache.final_norm_in.len(),
+            seq * cfg.d_model,
+            "cache.final_norm_in shape mismatch"
+        );
+
+        assert_eq!(
+            cache.final_norm_out.len(),
+            seq * cfg.d_model,
+            "cache.final_norm_out shape mismatch"
+        );
+
+        assert_eq!(
+            cache.logits.len(),
+            seq * cfg.vocab_size,
+            "cache.logits shape mismatch"
+        );
+
+        assert_eq!(
+            cache.blocks.len(),
+            cfg.n_layers,
+            "cache layer count mismatch"
+        );
         let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
 
         let (dx, d_lm_head) = matmul_backward(
