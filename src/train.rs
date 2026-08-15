@@ -292,8 +292,8 @@ impl Trainer {
             }
 
             if let Some(mut grads) = accum_grads {
-                // let scale = 1.0 / valid_count as f32;
-                let scale = 1.0 / (valid_count * self.tcfg.seq_len) as f32;
+                let scale = 1.0 / valid_count as f32;
+                // let scale = 1.0 / (valid_count * self.tcfg.seq_len) as f32;
                 grads.scale(scale);
                 let clipped_grads = self.clip_grads(grads, self.tcfg.grad_clip);
                 // grad_scale = 1/valid_count、apply_grads 内の AdamW に反映
