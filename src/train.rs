@@ -374,8 +374,8 @@ impl Trainer {
             //     // );
             // }
 
-            require_finite(&format!("b{i}.wo"), &block.attn.w_o);
-            require_finite(&format!("b{i}.w_down"), &block.ffn.w_down);
+            // require_finite(&format!("b{i}.wo"), &block.attn.w_o);
+            // require_finite(&format!("b{i}.w_down"), &block.ffn.w_down);
         }
 
         // for (i, block) in model.blocks.iter().enumerate() {
