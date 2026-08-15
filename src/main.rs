@@ -8,7 +8,7 @@ use transformer_gpu::train::{TrainConfig, Trainer};
 
 fn main() {
     let train_cofig = TrainConfig {
-        lr_max: 1e-4,
+        lr_max: 3e-4,
         batch_size: 1,
         ..TrainConfig::tiny_shakespeare()
     };
