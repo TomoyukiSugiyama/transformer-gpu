@@ -32,8 +32,8 @@ pub struct FfnBackward {
 
 impl Ffn {
     pub fn new(cfg: &ModelConfig) -> Self {
-        let scale_in = (1.0 / cfg.d_model as f32).sqrt();
-        let scale_down = (1.0 / cfg.d_ff as f32).sqrt();
+        let scale_in = (2.0 / cfg.d_model as f32).sqrt();
+        let scale_down = (2.0 / cfg.d_ff as f32).sqrt();
         Self {
             w_gate: random_f32(cfg.d_model * cfg.d_ff, 36, scale_in),
             w_up: random_f32(cfg.d_model * cfg.d_ff, 37, scale_in),

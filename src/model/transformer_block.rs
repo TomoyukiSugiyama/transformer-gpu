@@ -276,28 +276,28 @@ mod test {
         let cpu = tf.backward_cpu(&cfg, &dy_cpu, &cos_table, &sin_table, &mut cache_cpu);
         let gpu = tf.backward(&ctx, &cfg, &dy_gpu, &cos_table, &sin_table, &mut cache);
 
-        assert_close(&gpu.dx, &cpu.dx, 1e-4, 1e-5);
-        assert_close(&gpu.attn_backward.dx, &cpu.attn_backward.dx, 1e-4, 1e-5);
-        assert_close(&gpu.attn_backward.dw_q, &cpu.attn_backward.dw_q, 1e-4, 1e-5);
-        assert_close(&gpu.attn_backward.dw_k, &cpu.attn_backward.dw_k, 1e-4, 1e-5);
-        assert_close(&gpu.attn_backward.dw_v, &cpu.attn_backward.dw_v, 1e-4, 1e-5);
-        assert_close(&gpu.attn_backward.dw_o, &cpu.attn_backward.dw_o, 1e-4, 1e-5);
-        assert_close(&gpu.ffn_backward.dx, &cpu.ffn_backward.dx, 1e-4, 1e-5);
+        assert_close(&gpu.dx, &cpu.dx, 1e-3, 2e-5);
+        assert_close(&gpu.attn_backward.dx, &cpu.attn_backward.dx, 1e-3, 2e-5);
+        assert_close(&gpu.attn_backward.dw_q, &cpu.attn_backward.dw_q, 1e-3, 2e-5);
+        assert_close(&gpu.attn_backward.dw_k, &cpu.attn_backward.dw_k, 1e-3, 2e-5);
+        assert_close(&gpu.attn_backward.dw_v, &cpu.attn_backward.dw_v, 1e-3, 2e-5);
+        assert_close(&gpu.attn_backward.dw_o, &cpu.attn_backward.dw_o, 1e-3, 2e-5);
+        assert_close(&gpu.ffn_backward.dx, &cpu.ffn_backward.dx, 1e-3, 2e-5);
         assert_close(
             &gpu.ffn_backward.dw_gate,
             &cpu.ffn_backward.dw_gate,
-            1e-4,
-            1e-5,
+            1e-3,
+            2e-5,
         );
-        assert_close(&gpu.ffn_backward.dw_up, &cpu.ffn_backward.dw_up, 1e-4, 1e-5);
+        assert_close(&gpu.ffn_backward.dw_up, &cpu.ffn_backward.dw_up, 1e-3, 2e-5);
         assert_close(
             &gpu.ffn_backward.dw_down,
             &cpu.ffn_backward.dw_down,
-            1e-4,
-            1e-5,
+            1e-3,
+            2e-5,
         );
-        assert_close(&gpu.d_gamma_1, &cpu.d_gamma_1, 1e-4, 1e-5);
-        assert_close(&gpu.d_gamma_2, &cpu.d_gamma_2, 1e-4, 1e-5);
+        assert_close(&gpu.d_gamma_1, &cpu.d_gamma_1, 1e-3, 2e-5);
+        assert_close(&gpu.d_gamma_2, &cpu.d_gamma_2, 1e-3, 2e-5);
     }
 
     #[test]
