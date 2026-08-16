@@ -77,6 +77,29 @@ pub fn finite_slice(name: &str, xs: &[f32]) -> bool {
     ok
 }
 
+pub fn stats(name: &str, x: &[f32], row_width: usize) {
+    let n = x.len() as f32;
+    let mean = x.iter().sum::<f32>() / n;
+    let rms = (x.iter().map(|&v| v * v).sum::<f32>() / n).sqrt();
+    let mean_abs = x.iter().map(|&v| v.abs()).sum::<f32>() / n;
+    let max_abs = x.iter().map(|&v| v.abs()).fold(0.0_f32, f32::max);
+
+    println!(
+        "{name}: len={}, mean={:+.5e}, rms={:.5e}, mean_abs={:.5e}, max_abs={:.5e}",
+        x.len(),
+        mean,
+        rms,
+        mean_abs,
+        max_abs,
+    );
+
+    for (row, values) in x.chunks_exact(row_width).take(3).enumerate() {
+        let row_rms = (values.iter().map(|&v| v * v).sum::<f32>() / row_width as f32).sqrt();
+
+        println!("{name}[row={row}]: rms={row_rms:.5e}");
+    }
+}
+
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
