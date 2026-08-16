@@ -144,7 +144,7 @@ impl LanguageModel {
             blocks: (0..cfg.n_layers)
                 .map(|_| TransformerBlock::new(cfg))
                 .collect(),
-            final_gamma: random_f32(cfg.d_model, 11, scale),
+            final_gamma: vec![1.0; cfg.d_model],
             lm_head: random_f32(cfg.d_model * cfg.vocab_size, 12, scale),
         }
     }
@@ -199,16 +199,19 @@ impl LanguageModel {
 
         let mut x = embedding(ctx, token_ids, &self.embedding, cfg.vocab_size, cfg.d_model);
         cache.x0 = x.clone();
+        // stats("embedding", &x, cfg.d_model);
 
         self.blocks
             .iter()
             .zip(cache.blocks.iter_mut())
             .for_each(|(block, cache)| {
                 x = block.forward(ctx, cfg, &x, &cos_table, &sin_table, cache);
+                // stats("block", &x, cfg.d_model);
             });
 
         cache.final_norm_in = x.clone();
         cache.final_norm_out = rms_norm(ctx, &x, &self.final_gamma, cfg.eps, cfg.d_model as u32);
+        // stats("final_norm", &cache.final_norm_out, cfg.d_model);
 
         cache.logits = matmul_forward(
             ctx,
@@ -218,6 +221,7 @@ impl LanguageModel {
             cfg.d_model as u32,
             cfg.vocab_size as u32,
         );
+        // stats("logits", &cache.logits, cfg.vocab_size);
 
         cache.logits.clone()
     }

@@ -9,7 +9,6 @@ use crate::{
         ffn::{Ffn, FfnBackward, FfnForwardCache},
     },
     model_config::ModelConfig,
-    util::random_f32,
 };
 
 #[derive(Default)]
@@ -41,12 +40,11 @@ pub struct TransformerBlockBackward {
 
 impl TransformerBlock {
     pub fn new(cfg: &ModelConfig) -> Self {
-        let scale = (1.0 / cfg.d_model as f32).sqrt();
         Self {
             attn: Attention::new(&cfg),
             ffn: Ffn::new(cfg),
-            gamma_1: random_f32(cfg.d_model, 38, scale),
-            gamma_2: random_f32(cfg.d_model, 39, scale),
+            gamma_1: vec![1.0; cfg.d_model],
+            gamma_2: vec![1.0; cfg.d_model],
         }
     }
 
