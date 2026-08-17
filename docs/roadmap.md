@@ -39,6 +39,12 @@ backward カーネル実装、AdamW の GPU 化、loss 計算。CPU 版より複
 ### G-1-6 推論
 Tokenizer、KV cache、GQA 実装。top-k、top-p を追加し推論
 
+-> [G-1-6](g1-6.md)
+Tokenizer、top-k、top-p の実装が完了し、KV cache、GQA は処理高速化後に実施
+
+### G-1-7 テンソルの常駐化
+GPU 上にテンソルを常駐化し、ボトルネックとなる GPU buffer の生成から、CPU / GPU 間のデータ転送、GPU の完了を待機するポーリングに消費する時間を削減
+
 ## Phase G-2: クラウド GPU サーバに移植
 - NVIDIA A100/H100 (CUDA) に移行
 
