@@ -26,7 +26,9 @@ Rust で書かれた Transformer (decoder-only) 言語モデルの学習・推�
 
 ```
 src/
+|-- bpe_tokenizer.rs
 |-- char_bpe_tokenizer.rs
+|-- char_tokenizer.rs
 |-- checkpoint.rs
 |-- dataset.rs
 |-- gpu_context.rs
@@ -68,6 +70,7 @@ src/
 |   |-- swiglu_elementwise_backward.wgsl
 |   `-- swiglu_elementwise.wgsl
 |-- test_utils.rs
+|-- tokenizer.rs
 |-- train.rs
 `-- util.rs
 benches/        # ベンチマーク
