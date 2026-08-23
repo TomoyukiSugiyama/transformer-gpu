@@ -1,4 +1,4 @@
-use wgpu::BufferUsages;
+use wgpu::{BufferUsages, util::DeviceExt};
 
 use crate::{
     checkpoint::{Checkpointable, WeightMap},
@@ -6,7 +6,7 @@ use crate::{
     gpu_tensor::{GpuTensor, read_f32_tensor},
     kernel::{
         embedding::{embedding, embedding_backward},
-        matmul::{encode_matmul_into, matmul_backward, matmul_forward},
+        matmul::{create_matmul_bind_group, encode_matmul_into, matmul_backward, matmul_forward},
         rms_norm::{rms_norm, rms_norm_backward},
         rope::create_table,
     },
@@ -343,11 +343,8 @@ impl LanguageModel {
         encode_matmul_into(
             ctx,
             &mut encoder,
-            &gpu.hidden,
-            &gpu.weight,
-            &gpu.logits,
+            &gpu.bind_group,
             gpu.seq_len as u32,
-            gpu.hidden.shape[1] as u32,
             gpu.logits.shape[1] as u32,
         );
 
@@ -495,6 +492,8 @@ pub struct LmHeadGpuCache {
     pub weight: GpuTensor, // [d_model, vocab_size]
     pub hidden: GpuTensor, // [seq_len, d_model]
     pub logits: GpuTensor, // [seq_len, vocab_size]
+    pub bind_group: wgpu::BindGroup,
+    pub dims: wgpu::Buffer,
     pub seq_len: usize,
 }
 
@@ -508,29 +507,73 @@ impl LmHeadGpuCache {
     ) -> Self {
         let usage = BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST;
 
+        let hidden = GpuTensor::new_f32(
+            &ctx.device,
+            vec![seq_len, d_model],
+            usage,
+            Some("lm_head_hidden".to_owned()),
+        );
+
+        let weight = GpuTensor::from_f32(
+            &ctx.device,
+            lm_head,
+            vec![d_model, vocab_size],
+            usage,
+            Some("lm_head_weight".to_owned()),
+        );
+
+        let logits = GpuTensor::new_f32(
+            &ctx.device,
+            vec![seq_len, vocab_size],
+            usage,
+            Some("lm_head_logits".to_owned()),
+        );
+
+        let m = seq_len;
+        let k = d_model;
+        let n = vocab_size;
+
+        assert_eq!(hidden.shape, vec![m as usize, k as usize]);
+        assert_eq!(weight.shape, vec![k as usize, n as usize]);
+        assert_eq!(logits.shape, vec![m as usize, n as usize]);
+
+        let dims = [
+            seq_len as u32,
+            d_model as u32,
+            vocab_size as u32,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        let dims_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("dims"),
+                contents: bytemuck::cast_slice(&dims),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bind_group = create_matmul_bind_group(
+            ctx,
+            &hidden,
+            &weight,
+            &logits,
+            &dims_buffer,
+            m as u32,
+            k as u32,
+            n as u32,
+            Some("lm_head_matmul_bind_group"),
+        );
+
         Self {
             // これだけは初期化時に一度upload
-            weight: GpuTensor::from_f32(
-                &ctx.device,
-                lm_head,
-                vec![d_model, vocab_size],
-                usage,
-                Some("lm_head_weight".to_owned()),
-            ),
-
-            hidden: GpuTensor::new_f32(
-                &ctx.device,
-                vec![seq_len, d_model],
-                usage,
-                Some("lm_head_hidden".to_owned()),
-            ),
-
-            logits: GpuTensor::new_f32(
-                &ctx.device,
-                vec![seq_len, vocab_size],
-                usage,
-                Some("lm_head_logits".to_owned()),
-            ),
+            weight,
+            hidden,
+            logits,
+            bind_group,
+            dims: dims_buffer,
             seq_len,
         }
     }

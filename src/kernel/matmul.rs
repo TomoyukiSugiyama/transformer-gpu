@@ -8,44 +8,39 @@ const TILE: u32 = 16;
 pub fn encode_matmul_into(
     ctx: &GpuContext,
     encoder: &mut wgpu::CommandEncoder,
+    bind_group: &wgpu::BindGroup,
+    m: u32,
+    n: u32,
+) {
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: Some("matmul_pass"),
+        timestamp_writes: None,
+    });
+
+    pass.set_pipeline(&ctx.matmul_pipeline);
+    pass.set_bind_group(0, bind_group, &[]);
+
+    pass.dispatch_workgroups(n.div_ceil(TILE), m.div_ceil(TILE), 1);
+}
+
+pub fn create_matmul_bind_group(
+    ctx: &GpuContext,
     a: &GpuTensor,
     b: &GpuTensor,
     out: &GpuTensor,
+    dims: &wgpu::Buffer,
     m: u32,
     k: u32,
     n: u32,
-) {
-    assert_eq!(a.shape, vec![m as usize, k as usize]);
-    assert_eq!(b.shape, vec![k as usize, n as usize]);
-    assert_eq!(out.shape, vec![m as usize, n as usize]);
+    label: Option<&str>,
+) -> wgpu::BindGroup {
+    assert_eq!(a.shape.as_slice(), &[m as usize, k as usize]);
+    assert_eq!(b.shape.as_slice(), &[k as usize, n as usize]);
+    assert_eq!(out.shape.as_slice(), &[m as usize, n as usize]);
 
-    let module = ctx
-        .device
-        .create_shader_module(wgpu::include_wgsl!("../shader/matmul.wgsl"));
-
-    let pipeline = ctx
-        .device
-        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("matmul"),
-            layout: None,
-            module: &module,
-            entry_point: Some("matmul"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-
-    let dims = [m, k, n, 0, 0, 0, 0, 0];
-    let dims_buffer = ctx
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("dims"),
-            contents: bytemuck::cast_slice(&dims),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-
-    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("matmul_into_bind_group"),
-        layout: &pipeline.get_bind_group_layout(0),
+    ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label,
+        layout: &ctx.matmul_bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -61,20 +56,10 @@ pub fn encode_matmul_into(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: dims_buffer.as_entire_binding(),
+                resource: dims.as_entire_binding(),
             },
         ],
-    });
-
-    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        label: Some("matmul_into_pass"),
-        timestamp_writes: None,
-    });
-
-    pass.set_pipeline(&pipeline);
-    pass.set_bind_group(0, &bind_group, &[]);
-
-    pass.dispatch_workgroups(n.div_ceil(TILE), m.div_ceil(TILE), 1);
+    })
 }
 
 fn matmul(
@@ -278,7 +263,11 @@ mod tests {
     use wgpu::BufferUsages;
 
     use super::*;
-    use crate::{gpu_tensor::read_f32_tensor, test_utils::assert_close, util::random_f32};
+    use crate::{
+        gpu_tensor::{GpuTensor, read_f32_tensor},
+        test_utils::assert_close,
+        util::random_f32,
+    };
 
     #[test]
     fn test_matmul_into_matches_existing_matmul() {
@@ -291,6 +280,15 @@ mod tests {
         let a = random_f32(m * k, 1, 0.1);
         let b = random_f32(k * n, 2, 0.1);
 
+        let dims = [m as u32, k as u32, n as u32, 0, 0, 0, 0, 0];
+
+        let dims_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("dims"),
+                contents: bytemuck::cast_slice(&dims),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
         let expected = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, false, false);
 
         let usage = BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST;
@@ -318,16 +316,19 @@ mod tests {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-        encode_matmul_into(
+        let bind_group = create_matmul_bind_group(
             &ctx,
-            &mut encoder,
             &a_gpu,
             &b_gpu,
             &out_gpu,
+            &dims_buffer,
             m as u32,
             k as u32,
             n as u32,
+            Some("test_matmul_bind_group"),
         );
+
+        encode_matmul_into(&ctx, &mut encoder, &bind_group, m as u32, n as u32);
 
         ctx.queue.submit([encoder.finish()]);
         let actual = read_f32_tensor(&ctx, &out_gpu);
