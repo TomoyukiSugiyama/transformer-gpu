@@ -2,6 +2,8 @@ use std::num::NonZeroU64;
 
 use wgpu::util::DeviceExt;
 
+use crate::gpu_context::GpuContext;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DType {
     F32,
@@ -106,4 +108,45 @@ impl GpuTensor {
             size: NonZeroU64::new(self.byte_len()),
         })
     }
+}
+
+// TODO: GPUTensor へ移行が完了するまでの仮実装
+pub fn read_f32_tensor(ctx: &GpuContext, tensor: &GpuTensor) -> Vec<f32> {
+    let byte_len = tensor.byte_len();
+
+    let staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("read_f32_tensor_staging"),
+        size: byte_len,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("read_f32_tensor_encoder"),
+        });
+
+    encoder.copy_buffer_to_buffer(&tensor.buffer, 0, &staging, 0, byte_len);
+
+    ctx.queue.submit([encoder.finish()]);
+
+    let slice = staging.slice(..);
+
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+
+    ctx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("GPU poll failed");
+
+    let mapped = slice.get_mapped_range();
+
+    let values = bytemuck::cast_slice::<u8, f32>(&mapped).to_vec();
+
+    drop(mapped);
+    staging.unmap();
+
+    assert_eq!(values.len(), tensor.len);
+
+    values
 }

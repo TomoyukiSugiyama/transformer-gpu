@@ -6,7 +6,9 @@ use crate::{
     gpu_context::GpuContext,
     kernel::{adam_w::AdamW, cross_entropy_loss::cross_entropy_loss},
     lr_scheduler::{LrScheduleKind, LrScheduler},
-    model::language_model::{LanguageModel, LanguageModelBackward, LanguageModelForwardCache},
+    model::language_model::{
+        LanguageModel, LanguageModelBackward, LanguageModelForwardCache, LmHeadGpuCache,
+    },
     model_config::ModelConfig,
     tokenizer::TokenizerKind,
 };
@@ -81,16 +83,45 @@ impl TrainConfig {
 pub struct Trainer {
     pub opt: AdamW,
     pub tcfg: TrainConfig,
+    pub lm_head_gpu: Option<LmHeadGpuCache>,
 }
 
 impl Trainer {
     pub fn new(tcfg: TrainConfig) -> Self {
         let opt = AdamW::new_with_wd(tcfg.lr_min, tcfg.wd);
-        Self { opt, tcfg }
+        Self {
+            opt,
+            tcfg,
+            lm_head_gpu: None,
+        }
+    }
+
+    fn ensure_lm_head_gpu(
+        &mut self,
+        ctx: &GpuContext,
+        model: &LanguageModel,
+        cfg: &ModelConfig,
+        seq_len: usize,
+    ) {
+        let needs_rebuild = self.lm_head_gpu.as_ref().is_none_or(|gpu| {
+            gpu.seq_len != seq_len
+                || gpu.hidden.shape != vec![seq_len, cfg.d_model]
+                || gpu.logits.shape != vec![seq_len, cfg.vocab_size]
+        });
+
+        if needs_rebuild {
+            self.lm_head_gpu = Some(LmHeadGpuCache::new(
+                ctx,
+                &model.lm_head,
+                seq_len,
+                cfg.d_model,
+                cfg.vocab_size,
+            ));
+        }
     }
 
     pub fn compute_grads(
-        &self,
+        &mut self,
         ctx: &GpuContext,
         model: &LanguageModel,
         cfg: &ModelConfig,
@@ -101,7 +132,14 @@ impl Trainer {
         let input = &input_ids[..seq];
         let target: Vec<usize> = input_ids[1..].iter().map(|&t| t as usize).collect();
 
-        let logits = model.forward(ctx, cfg, input, cache);
+        let lm_head_gpu = self
+            .lm_head_gpu
+            .as_mut()
+            .expect("LmHeadGpuCache must be initialized in Trainer::run");
+
+        assert_eq!(lm_head_gpu.seq_len, seq);
+
+        let logits = model.forward(ctx, cfg, input, cache, Some(lm_head_gpu));
         let (loss, d_logits) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
 
         if !loss.is_finite() {
@@ -114,6 +152,7 @@ impl Trainer {
 
     pub fn apply_grads(
         &mut self,
+        ctx: &GpuContext,
         model: &mut LanguageModel,
         grads: &LanguageModelBackward,
         lr: f32,
@@ -155,10 +194,16 @@ impl Trainer {
             self.opt
                 .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
         }
+
+        self.lm_head_gpu
+            .as_ref()
+            .expect("LmHeadGpuCache must be initialized in Trainer::run")
+            .weight
+            .write_f32(&ctx.queue, &model.lm_head);
     }
 
     pub fn compute_val_loss(
-        &self,
+        &mut self,
         ctx: &GpuContext,
         model: &mut LanguageModel,
         cfg: &ModelConfig,
@@ -174,12 +219,17 @@ impl Trainer {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut total = 0.0f32;
 
+        let lm_head_gpu = self
+            .lm_head_gpu
+            .as_mut()
+            .expect("LmHeadGpuCache must be initialized in Trainer::run");
+
         for _ in 0..self.tcfg.eval_batches {
             let offset = rng.random_range(0..=max_off);
             let window = &val_ids[offset..offset + seq + 1];
             let input = &window[..seq];
             let target: Vec<usize> = window[1..].iter().map(|&t| t as usize).collect();
-            let logits = model.forward(ctx, cfg, input, cache);
+            let logits = model.forward(ctx, cfg, input, cache, Some(lm_head_gpu));
             let (loss, _) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
             total += loss;
         }
@@ -220,6 +270,8 @@ impl Trainer {
             }
             println!("# resume from checkpoint: {}", path);
         }
+
+        self.ensure_lm_head_gpu(ctx, model, cfg, self.tcfg.seq_len);
 
         let lr_scheduler = LrScheduler::with_kind(
             self.tcfg.lr_max,
@@ -299,7 +351,7 @@ impl Trainer {
                 // grad_scale = 1/valid_count、apply_grads 内の AdamW に反映
                 // self.opt.set_grad_scale(valid_count);
 
-                self.apply_grads(model, &clipped_grads, lr);
+                self.apply_grads(ctx, model, &clipped_grads, lr);
             }
             // self.opt.reset_grad_scale();
 
@@ -446,6 +498,9 @@ mod tests {
             eval_interval: 999,
             ..Default::default()
         });
+
+        trainer.ensure_lm_head_gpu(&ctx, &model, &cfg, trainer.tcfg.seq_len);
+
         let lr_scheduler = LrScheduler::with_kind(
             trainer.tcfg.lr_max,
             trainer.tcfg.lr_min,
@@ -467,7 +522,7 @@ mod tests {
         }
         trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
         if let Some(grads) = accum_grads_before {
-            trainer.apply_grads(&mut model, &grads, lr_scheduler.get_lr(0));
+            trainer.apply_grads(&ctx, &mut model, &grads, lr_scheduler.get_lr(0));
         }
         trainer.opt.reset_grad_scale();
 
@@ -487,7 +542,7 @@ mod tests {
             // grad_scale = 1/batch_size、apply_grads 内の AdamW に反映
             trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
             if let Some(grads) = accum_grads {
-                trainer.apply_grads(&mut model, &grads, lr);
+                trainer.apply_grads(&ctx, &mut model, &grads, lr);
             }
             trainer.opt.reset_grad_scale();
         }
@@ -503,7 +558,7 @@ mod tests {
         }
         trainer.opt.set_grad_scale(trainer.tcfg.batch_size);
         if let Some(grads) = accum_grads_after {
-            trainer.apply_grads(&mut model, &grads, lr_scheduler.get_lr(0));
+            trainer.apply_grads(&ctx, &mut model, &grads, lr_scheduler.get_lr(0));
         }
         trainer.opt.reset_grad_scale();
 

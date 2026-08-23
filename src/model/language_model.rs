@@ -1,9 +1,12 @@
+use wgpu::BufferUsages;
+
 use crate::{
     checkpoint::{Checkpointable, WeightMap},
     gpu_context::GpuContext,
+    gpu_tensor::{GpuTensor, read_f32_tensor},
     kernel::{
         embedding::{embedding, embedding_backward},
-        matmul::{matmul_backward, matmul_forward},
+        matmul::{encode_matmul_into, matmul_backward, matmul_forward},
         rms_norm::{rms_norm, rms_norm_backward},
         rope::create_table,
     },
@@ -155,6 +158,7 @@ impl LanguageModel {
         cfg: &ModelConfig,
         token_ids: &[u32],
         cache: &mut LanguageModelForwardCache,
+        lm_head_gpu: Option<&mut LmHeadGpuCache>,
     ) -> Vec<f32> {
         assert!(cfg.d_model > 0);
         assert!(cfg.d_ff > 0);
@@ -213,14 +217,17 @@ impl LanguageModel {
         cache.final_norm_out = rms_norm(ctx, &x, &self.final_gamma, cfg.eps, cfg.d_model as u32);
         // stats("final_norm", &cache.final_norm_out, cfg.d_model);
 
-        cache.logits = matmul_forward(
-            ctx,
-            &cache.final_norm_out,
-            &self.lm_head,
-            seq as u32,
-            cfg.d_model as u32,
-            cfg.vocab_size as u32,
-        );
+        cache.logits = match lm_head_gpu {
+            Some(gpu) => self.lm_head_forward_gpu(ctx, gpu, &cache.final_norm_out),
+            None => matmul_forward(
+                ctx,
+                &cache.final_norm_out,
+                &self.lm_head,
+                seq as u32,
+                cfg.d_model as u32,
+                cfg.vocab_size as u32,
+            ),
+        };
         // stats("logits", &cache.logits, cfg.vocab_size);
 
         cache.logits.clone()
@@ -314,6 +321,41 @@ impl LanguageModel {
             d_final_gamma,
             d_lm_head,
         }
+    }
+
+    pub fn lm_head_forward_gpu(
+        &self,
+        ctx: &GpuContext,
+        gpu: &mut LmHeadGpuCache,
+        final_norm_out: &[f32],
+    ) -> Vec<f32> {
+        assert_eq!(final_norm_out.len(), gpu.seq_len * gpu.hidden.shape[1],);
+
+        // TODO: ここだけは前段がまだCPU Vecなのでuploadが残る
+        gpu.hidden.write_f32(&ctx.queue, final_norm_out);
+
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("lm_head_forward_encoder"),
+            });
+
+        encode_matmul_into(
+            ctx,
+            &mut encoder,
+            &gpu.hidden,
+            &gpu.weight,
+            &gpu.logits,
+            gpu.seq_len as u32,
+            gpu.hidden.shape[1] as u32,
+            gpu.logits.shape[1] as u32,
+        );
+
+        ctx.queue.submit([encoder.finish()]);
+
+        // MVPでは既存readback helperを使う。
+        // TODO: 次の段階でここを消してcross entropyへ直接つなぐ。
+        read_f32_tensor(ctx, &gpu.logits)
     }
 
     #[cfg(test)]
@@ -449,6 +491,51 @@ impl Checkpointable for LanguageModel {
     }
 }
 
+pub struct LmHeadGpuCache {
+    pub weight: GpuTensor, // [d_model, vocab_size]
+    pub hidden: GpuTensor, // [seq_len, d_model]
+    pub logits: GpuTensor, // [seq_len, vocab_size]
+    pub seq_len: usize,
+}
+
+impl LmHeadGpuCache {
+    pub fn new(
+        ctx: &GpuContext,
+        lm_head: &[f32],
+        seq_len: usize,
+        d_model: usize,
+        vocab_size: usize,
+    ) -> Self {
+        let usage = BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST;
+
+        Self {
+            // これだけは初期化時に一度upload
+            weight: GpuTensor::from_f32(
+                &ctx.device,
+                lm_head,
+                vec![d_model, vocab_size],
+                usage,
+                Some("lm_head_weight".to_owned()),
+            ),
+
+            hidden: GpuTensor::new_f32(
+                &ctx.device,
+                vec![seq_len, d_model],
+                usage,
+                Some("lm_head_hidden".to_owned()),
+            ),
+
+            logits: GpuTensor::new_f32(
+                &ctx.device,
+                vec![seq_len, vocab_size],
+                usage,
+                Some("lm_head_logits".to_owned()),
+            ),
+            seq_len,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::{
@@ -472,7 +559,7 @@ mod test {
 
         let lm = LanguageModel::new(&cfg);
         let cpu = lm.forward_cpu(&cfg, &token_ids, &mut cache_cpu);
-        let gpu = lm.forward(&ctx, &cfg, &token_ids, &mut cache);
+        let gpu = lm.forward(&ctx, &cfg, &token_ids, &mut cache, None);
 
         assert_close(&gpu, &cpu, 1e-4, 1e-5);
     }
@@ -494,7 +581,7 @@ mod test {
 
         let lm = LanguageModel::new(&cfg);
         let logits_cpu = lm.forward_cpu(&cfg, &input_ids, &mut cache_cpu);
-        let logits_gpu = lm.forward(&ctx, &cfg, &input_ids, &mut cache);
+        let logits_gpu = lm.forward(&ctx, &cfg, &input_ids, &mut cache, None);
 
         let (loss_cpu, d_logits_cpu) =
             cross_entropy_loss_cpu(&logits_cpu, &targets, input_seq, cfg.vocab_size);

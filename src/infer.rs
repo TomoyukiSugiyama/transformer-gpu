@@ -93,7 +93,7 @@ pub fn generate_top_k(
 
     for _ in 0..max_new_token {
         let seq = token_ids_u32.len();
-        let logits = model.forward(ctx, cfg, &token_ids_u32, &mut cache);
+        let logits = model.forward(ctx, cfg, &token_ids_u32, &mut cache, None);
 
         let next_logits = &logits[(seq - 1) * cfg.vocab_size..seq * cfg.vocab_size];
         let next_id = top_k_sample(next_logits, top_k, temperature);
@@ -128,7 +128,7 @@ pub fn generate_top_p(
 
     for _ in 0..max_new_token {
         let seq = token_ids_u32.len();
-        let logits = model.forward(ctx, cfg, &token_ids_u32, &mut cache);
+        let logits = model.forward(ctx, cfg, &token_ids_u32, &mut cache, None);
 
         let next_logits = &logits[(seq - 1) * cfg.vocab_size..seq * cfg.vocab_size];
         let next_id = top_p_sample(next_logits, top_p, temperature);

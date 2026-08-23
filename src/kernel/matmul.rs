@@ -1,8 +1,81 @@
 use wgpu::util::DeviceExt;
 
-use crate::gpu_context::GpuContext;
+use crate::{gpu_context::GpuContext, gpu_tensor::GpuTensor};
 
 const TILE: u32 = 16;
+
+// TODO: 転置行列をサポートしていない
+pub fn encode_matmul_into(
+    ctx: &GpuContext,
+    encoder: &mut wgpu::CommandEncoder,
+    a: &GpuTensor,
+    b: &GpuTensor,
+    out: &GpuTensor,
+    m: u32,
+    k: u32,
+    n: u32,
+) {
+    assert_eq!(a.shape, vec![m as usize, k as usize]);
+    assert_eq!(b.shape, vec![k as usize, n as usize]);
+    assert_eq!(out.shape, vec![m as usize, n as usize]);
+
+    let module = ctx
+        .device
+        .create_shader_module(wgpu::include_wgsl!("../shader/matmul.wgsl"));
+
+    let pipeline = ctx
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("matmul"),
+            layout: None,
+            module: &module,
+            entry_point: Some("matmul"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+    let dims = [m, k, n, 0, 0, 0, 0, 0];
+    let dims_buffer = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("dims"),
+            contents: bytemuck::cast_slice(&dims),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("matmul_into_bind_group"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: a.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: b.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: out.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: dims_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: Some("matmul_into_pass"),
+        timestamp_writes: None,
+    });
+
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+
+    pass.dispatch_workgroups(n.div_ceil(TILE), m.div_ceil(TILE), 1);
+}
 
 fn matmul(
     ctx: &GpuContext,
@@ -202,8 +275,65 @@ pub fn matmul_backward_cpu(
 
 #[cfg(test)]
 mod tests {
+    use wgpu::BufferUsages;
+
     use super::*;
-    use crate::{test_utils::assert_close, util::random_f32};
+    use crate::{gpu_tensor::read_f32_tensor, test_utils::assert_close, util::random_f32};
+
+    #[test]
+    fn test_matmul_into_matches_existing_matmul() {
+        let ctx = GpuContext::new();
+
+        let m = 7;
+        let k = 13;
+        let n = 19;
+
+        let a = random_f32(m * k, 1, 0.1);
+        let b = random_f32(k * n, 2, 0.1);
+
+        let expected = matmul(&ctx, &a, &b, m as u32, k as u32, n as u32, false, false);
+
+        let usage = BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST;
+
+        let a_gpu = GpuTensor::from_f32(
+            &ctx.device,
+            &a,
+            vec![m, k],
+            usage,
+            Some("test_a".to_owned()),
+        );
+
+        let b_gpu = GpuTensor::from_f32(
+            &ctx.device,
+            &b,
+            vec![k, n],
+            usage,
+            Some("test_b".to_owned()),
+        );
+
+        let out_gpu =
+            GpuTensor::new_f32(&ctx.device, vec![m, n], usage, Some("test_out".to_owned()));
+
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        encode_matmul_into(
+            &ctx,
+            &mut encoder,
+            &a_gpu,
+            &b_gpu,
+            &out_gpu,
+            m as u32,
+            k as u32,
+            n as u32,
+        );
+
+        ctx.queue.submit([encoder.finish()]);
+        let actual = read_f32_tensor(&ctx, &out_gpu);
+
+        assert_close(&actual, &expected, 1e-4, 1e-5);
+    }
 
     #[test]
     fn test_matmul_identity() {
