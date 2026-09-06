@@ -89,7 +89,7 @@ impl GpuTensor {
 
         let label = label.into();
 
-        Self::new_with_dtype(device, shape, DType::F32, usage, label)
+        Self::new_with_dtype(device, shape, DType::U32, usage, label)
     }
 
     pub fn write_u32(&self, queue: &wgpu::Queue, values: &[u32]) {
