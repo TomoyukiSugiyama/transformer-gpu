@@ -11,9 +11,10 @@ pub enum DType {
 }
 
 impl DType {
-    pub const fn byte_size(self) -> u64 {
+    pub const fn byte_size(self) -> usize {
         match self {
-            Self::F32 | Self::U32 => std::mem::size_of::<u32>() as u64,
+            Self::F32 => std::mem::size_of::<f32>(),
+            Self::U32 => std::mem::size_of::<u32>(),
         }
     }
 }
@@ -32,7 +33,70 @@ impl GpuTensor {
     }
 
     pub fn byte_len(&self) -> u64 {
-        self.len as u64 * self.dtype.byte_size()
+        self.len as u64 * self.dtype.byte_size() as u64
+    }
+
+    fn new_with_dtype(
+        device: &wgpu::Device,
+        shape: impl Into<Vec<usize>>,
+        dtype: DType,
+        usage: wgpu::BufferUsages,
+        label: impl Into<Option<String>>,
+    ) -> Self {
+        let shape = shape.into();
+        let len = Self::numel(&shape);
+        let label = label.into();
+    
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: label.as_deref(),
+            size: (len * dtype.byte_size()) as u64,
+            usage,
+            mapped_at_creation: false,
+        });
+    
+        Self {
+            buffer,
+            shape,
+            len,
+            dtype,
+            label,
+        }
+    }
+
+    pub fn new_u32(
+        device: &wgpu::Device,
+        shape: impl Into<Vec<usize>>,
+        usage: wgpu::BufferUsages,
+        label: impl Into<Option<String>>,
+    ) -> Self {
+        let shape = shape.into();
+        let label = label.into();
+
+        Self::new_with_dtype(device, shape, DType::U32, usage, label)
+    }
+
+    pub fn from_u32(
+        device: &wgpu::Device,
+        values: &[u32],
+        shape: impl Into<Vec<usize>>,
+        usage: wgpu::BufferUsages,
+        label: impl Into<Option<String>>,
+    ) -> Self {
+        let shape = shape.into();
+        let len = Self::numel(&shape);
+
+        assert_eq!(values.len(), len);
+
+        let label = label.into();
+
+        Self::new_with_dtype(device, shape, DType::F32, usage, label)
+    }
+
+    pub fn write_u32(&self, queue: &wgpu::Queue, values: &[u32]) {
+        assert_eq!(self.dtype, DType::U32);
+        assert_eq!(self.len, values.len());
+
+        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(values));
     }
 
     pub fn new_f32(

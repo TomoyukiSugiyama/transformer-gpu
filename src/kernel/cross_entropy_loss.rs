@@ -1,5 +1,75 @@
-use crate::gpu_context::GpuContext;
+use crate::{
+    gpu_context::GpuContext,
+    gpu_tensor::{DType, GpuTensor},
+};
 use wgpu::util::DeviceExt;
+
+pub fn encode_cross_entropy_into(
+    ctx: &GpuContext,
+    encoder: &mut wgpu::CommandEncoder,
+    bind_group: &wgpu::BindGroup,
+    seq: usize,
+    vocab_size: usize,
+) {
+    assert!(seq > 0, "seq must be > 0");
+    assert!(vocab_size > 0, "vocab_size must be > 0");
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: Some("croll_entropy_loss_pass"),
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(&ctx.cross_entropy_pipeline);
+    pass.set_bind_group(0, bind_group, &[]);
+
+    pass.dispatch_workgroups(seq as u32, 1, 1);
+}
+
+pub fn create_cross_entropy_bind_group(
+    ctx: &GpuContext,
+    logits: &GpuTensor,
+    targets: &GpuTensor,
+    loss_per_token: &GpuTensor,
+    d_logits: &GpuTensor,
+    dims: &wgpu::Buffer,
+    seq: usize,
+    vocab_size: usize,
+    label: Option<&str>,
+) -> wgpu::BindGroup {
+    assert_eq!(logits.dtype, DType::F32);
+    assert_eq!(targets.dtype, DType::U32);
+    assert_eq!(d_logits.dtype, DType::F32);
+    assert_eq!(loss_per_token.dtype, DType::F32);
+
+    assert_eq!(logits.shape.as_slice(), &[seq, vocab_size]);
+    assert_eq!(targets.shape.as_slice(), &[seq]);
+    assert_eq!(loss_per_token.shape.as_slice(), &[seq]);
+    assert_eq!(d_logits.shape.as_slice(), &[seq, vocab_size]);
+    ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label,
+        layout: &ctx.cross_entropy_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: logits.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: targets.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: loss_per_token.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: d_logits.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: dims.as_entire_binding(),
+            },
+        ],
+    })
+}
 
 pub fn cross_entropy_loss(
     ctx: &GpuContext,
@@ -214,10 +284,17 @@ pub fn cross_entropy_loss_row_cpu(logits: &[f32], target: usize) -> (f32, Vec<f3
 
 #[cfg(test)]
 mod test {
+    use wgpu::{BufferUsages, CommandEncoderDescriptor, util::DeviceExt};
+
     use crate::{
         gpu_context::GpuContext,
-        kernel::cross_entropy_loss::{cross_entropy_loss, cross_entropy_loss_cpu},
+        gpu_tensor::{GpuTensor, read_f32_tensor},
+        kernel::cross_entropy_loss::{
+            create_cross_entropy_bind_group, cross_entropy_loss, cross_entropy_loss_cpu,
+            encode_cross_entropy_into,
+        },
         test_utils::assert_close,
+        util::random_f32,
     };
 
     #[test]
@@ -393,5 +470,137 @@ mod test {
 
         assert_close(&gpu_grad, &cpu_grad, 1e-4, 1e-5);
         assert!((gpu_loss - cpu_loss).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_cross_entropy_into_matches_existing_path() {
+        let ctx = GpuContext::new();
+
+        let seq = 7usize;
+        let vocab_size = 19usize;
+
+        let logits_host = random_f32(seq * vocab_size, 123, 0.5);
+
+        let targets_u32: Vec<u32> = (0..seq).map(|i| (i % vocab_size) as u32).collect();
+
+        let targets_usize: Vec<usize> = targets_u32
+            .iter()
+            .map(|&token_id| token_id as usize)
+            .collect();
+
+        // 既存のVec -> GPU -> Vec APIを基準にする
+        let (expected_loss, expected_grad) =
+            cross_entropy_loss(&ctx, &logits_host, &targets_usize, seq, vocab_size);
+
+        let storage_rw = BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST;
+
+        let targets_usage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
+
+        // logits: [seq, vocab]
+        let logits_gpu = GpuTensor::from_f32(
+            &ctx.device,
+            &logits_host,
+            vec![seq, vocab_size],
+            storage_rw,
+            Some("test_ce_logits".to_owned()),
+        );
+
+        // targets: [seq]
+        let targets_gpu = GpuTensor::new_u32(
+            &ctx.device,
+            vec![seq],
+            targets_usage,
+            Some("test_ce_targets".to_owned()),
+        );
+
+        targets_gpu.write_u32(&ctx.queue, &targets_u32);
+
+        // loss_per_token: [seq]
+        let losses_gpu = GpuTensor::new_f32(
+            &ctx.device,
+            vec![seq],
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            Some("test_ce_losses".to_owned()),
+        );
+
+        // d_logits: [seq, vocab]
+        let grad_gpu = GpuTensor::new_f32(
+            &ctx.device,
+            vec![seq, vocab_size],
+            storage_rw,
+            Some("test_ce_grad".to_owned()),
+        );
+
+        let dims_values = [seq as u32, vocab_size as u32, 0, 0];
+
+        let dims = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("test_ce_dims"),
+                contents: bytemuck::cast_slice(&dims_values),
+                usage: BufferUsages::UNIFORM,
+            });
+
+        let bind_group = create_cross_entropy_bind_group(
+            &ctx,
+            &logits_gpu,
+            &targets_gpu,
+            &losses_gpu,
+            &grad_gpu,
+            &dims,
+            seq,
+            vocab_size,
+            Some("test_cross_entropy_bind_group"),
+        );
+
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("test_cross_entropy_encoder"),
+            });
+
+        encode_cross_entropy_into(&ctx, &mut encoder, &bind_group, seq, vocab_size);
+
+        ctx.queue.submit([encoder.finish()]);
+
+        let losses = read_f32_tensor(&ctx, &losses_gpu);
+
+        let actual_grad = read_f32_tensor(&ctx, &grad_gpu);
+
+        assert_eq!(losses.len(), seq);
+        assert_eq!(actual_grad.len(), seq * vocab_size);
+
+        let actual_loss = losses.iter().sum::<f32>() / seq as f32;
+
+        assert!(
+            (actual_loss - expected_loss).abs() < 1e-5,
+            "loss mismatch: gpu={actual_loss:.8}, existing={expected_loss:.8}, \
+             abs_err={:.8e}",
+            (actual_loss - expected_loss).abs(),
+        );
+
+        assert_close(&actual_grad, &expected_grad, 1e-4, 1e-5);
+
+        // softmax cross entropyの勾配は各rowで合計がほぼゼロ。
+        for row in 0..seq {
+            let start = row * vocab_size;
+            let end = start + vocab_size;
+
+            let grad_sum: f32 = actual_grad[start..end].iter().sum();
+
+            assert!(
+                grad_sum.abs() < 1e-4,
+                "gradient row sum must be near zero: row={row}, sum={grad_sum:.8e}",
+            );
+
+            let target = targets_u32[row] as usize;
+
+            assert!(
+                actual_grad[start + target] < 0.0,
+                "target gradient must be negative: row={row}, \
+                 target={target}, grad={:.8e}",
+                actual_grad[start + target],
+            );
+        }
     }
 }

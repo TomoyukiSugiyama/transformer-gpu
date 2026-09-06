@@ -5,6 +5,7 @@ use crate::{
     gpu_context::GpuContext,
     gpu_tensor::{GpuTensor, read_f32_tensor},
     kernel::{
+        cross_entropy_loss::create_cross_entropy_bind_group,
         embedding::{embedding, embedding_backward},
         matmul::{create_matmul_bind_group, encode_matmul_into, matmul_backward, matmul_forward},
         rms_norm::{rms_norm, rms_norm_backward},
@@ -152,6 +153,75 @@ impl LanguageModel {
         }
     }
 
+    pub fn encode_forward(
+        &self,
+        ctx: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        cfg: &ModelConfig,
+        token_ids: &[u32],
+        cache: &mut LanguageModelForwardCache,
+        lm_head_gpu: &mut LmHeadGpuCache,
+    ) {
+        assert!(cfg.d_model > 0);
+        assert!(cfg.d_ff > 0);
+        assert!(cfg.vocab_size > 0);
+        assert!(cfg.n_layers > 0);
+        assert!(cfg.n_heads > 0);
+
+        assert_eq!(
+            cfg.d_model % cfg.n_heads,
+            0,
+            "d_model must be divisible by n_heads"
+        );
+
+        assert_eq!(
+            self.blocks.len(),
+            cfg.n_layers,
+            "model layer count mismatch"
+        );
+
+        assert_eq!(
+            cache.blocks.len(),
+            cfg.n_layers,
+            "cache layer count mismatch"
+        );
+
+        assert!(!token_ids.is_empty(), "token_ids must not be empty");
+
+        for (i, &token_id) in token_ids.iter().enumerate() {
+            assert!(
+                (token_id as usize) < cfg.vocab_size,
+                "token_ids[{i}]={token_id} out of range"
+            );
+        }
+
+        assert_eq!(self.embedding.len(), cfg.vocab_size * cfg.d_model);
+
+        assert_eq!(self.lm_head.len(), cfg.d_model * cfg.vocab_size);
+        // let seq = token_ids.len();
+        let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
+
+        cache.token_ids = token_ids.to_vec();
+
+        let mut x = embedding(ctx, token_ids, &self.embedding, cfg.vocab_size, cfg.d_model);
+        cache.x0 = x.clone();
+        // stats("embedding", &x, cfg.d_model);
+
+        self.blocks
+            .iter()
+            .zip(cache.blocks.iter_mut())
+            .for_each(|(block, cache)| {
+                x = block.forward(ctx, cfg, &x, &cos_table, &sin_table, cache);
+                // stats("block", &x, cfg.d_model);
+            });
+
+        cache.final_norm_in = x.clone();
+        cache.final_norm_out = rms_norm(ctx, &x, &self.final_gamma, cfg.eps, cfg.d_model as u32);
+        // stats("final_norm", &cache.final_norm_out, cfg.d_model);
+
+        self.encode_lm_head_forward_gpu(ctx, encoder, lm_head_gpu, &cache.final_norm_out);
+    }
+
     pub fn forward(
         &self,
         ctx: &GpuContext,
@@ -265,12 +335,6 @@ impl LanguageModel {
         );
 
         assert_eq!(
-            cache.logits.len(),
-            seq * cfg.vocab_size,
-            "cache.logits shape mismatch"
-        );
-
-        assert_eq!(
             cache.blocks.len(),
             cfg.n_layers,
             "cache layer count mismatch"
@@ -323,6 +387,28 @@ impl LanguageModel {
         }
     }
 
+    pub fn encode_lm_head_forward_gpu(
+        &self,
+        ctx: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        gpu: &mut LmHeadGpuCache,
+        final_norm_out: &[f32],
+    ) {
+        assert_eq!(final_norm_out.len(), gpu.seq_len * gpu.hidden.shape[1],);
+
+        // TODO: ここだけは前段がまだCPU Vecなのでuploadが残る
+        gpu.hidden.write_f32(&ctx.queue, final_norm_out);
+
+        // GPU buffer -> GPU buffer
+        encode_matmul_into(
+            ctx,
+            encoder,
+            &gpu.matmul_bind_group,
+            gpu.seq_len as u32,
+            gpu.logits.shape[1] as u32,
+        );
+    }
+
     pub fn lm_head_forward_gpu(
         &self,
         ctx: &GpuContext,
@@ -331,7 +417,6 @@ impl LanguageModel {
     ) -> Vec<f32> {
         assert_eq!(final_norm_out.len(), gpu.seq_len * gpu.hidden.shape[1],);
 
-        // TODO: ここだけは前段がまだCPU Vecなのでuploadが残る
         gpu.hidden.write_f32(&ctx.queue, final_norm_out);
 
         let mut encoder = ctx
@@ -340,17 +425,10 @@ impl LanguageModel {
                 label: Some("lm_head_forward_encoder"),
             });
 
-        encode_matmul_into(
-            ctx,
-            &mut encoder,
-            &gpu.bind_group,
-            gpu.seq_len as u32,
-            gpu.logits.shape[1] as u32,
-        );
+        self.encode_lm_head_forward_gpu(ctx, &mut encoder, gpu, final_norm_out);
 
         ctx.queue.submit([encoder.finish()]);
 
-        // MVPでは既存readback helperを使う。
         // TODO: 次の段階でここを消してcross entropyへ直接つなぐ。
         read_f32_tensor(ctx, &gpu.logits)
     }
@@ -489,11 +567,19 @@ impl Checkpointable for LanguageModel {
 }
 
 pub struct LmHeadGpuCache {
+    // lm_head matmul
     pub weight: GpuTensor, // [d_model, vocab_size]
     pub hidden: GpuTensor, // [seq_len, d_model]
     pub logits: GpuTensor, // [seq_len, vocab_size]
-    pub bind_group: wgpu::BindGroup,
-    pub dims: wgpu::Buffer,
+    pub matmul_bind_group: wgpu::BindGroup,
+    pub matmul_dims: wgpu::Buffer,
+
+    // cross entropy
+    pub targets: GpuTensor,        // [seq_len], U32
+    pub loss_per_token: GpuTensor, // [seq_len], F32
+    pub d_logits: GpuTensor,       // [seq_len, vocab_size], F32
+    pub ce_dims: wgpu::Buffer,
+    pub ce_bind_group: wgpu::BindGroup,
     pub seq_len: usize,
 }
 
@@ -505,12 +591,29 @@ impl LmHeadGpuCache {
         d_model: usize,
         vocab_size: usize,
     ) -> Self {
-        let usage = BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST;
+        assert!(seq_len > 0);
+        assert!(d_model > 0);
+        assert!(vocab_size > 0);
+
+        assert_eq!(
+            lm_head.len(),
+            d_model * vocab_size,
+            "lm_head shape must be [d_model, vocab_size]"
+        );
+
+        let storage_rw = BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST;
+
+        let storage_read_from_cpu = BufferUsages::STORAGE | BufferUsages::COPY_DST;
+
+        // ------------------------------------------------------------
+        // lm_head matmul: hidden [seq, d] @ weight [d, vocab]
+        //                 -> logits [seq, vocab]
+        // ------------------------------------------------------------
 
         let hidden = GpuTensor::new_f32(
             &ctx.device,
             vec![seq_len, d_model],
-            usage,
+            storage_rw,
             Some("lm_head_hidden".to_owned()),
         );
 
@@ -518,14 +621,14 @@ impl LmHeadGpuCache {
             &ctx.device,
             lm_head,
             vec![d_model, vocab_size],
-            usage,
+            storage_rw,
             Some("lm_head_weight".to_owned()),
         );
 
         let logits = GpuTensor::new_f32(
             &ctx.device,
             vec![seq_len, vocab_size],
-            usage,
+            storage_rw,
             Some("lm_head_logits".to_owned()),
         );
 
@@ -537,7 +640,7 @@ impl LmHeadGpuCache {
         assert_eq!(weight.shape, vec![k as usize, n as usize]);
         assert_eq!(logits.shape, vec![m as usize, n as usize]);
 
-        let dims = [
+        let matmul_dims_values = [
             seq_len as u32,
             d_model as u32,
             vocab_size as u32,
@@ -547,33 +650,86 @@ impl LmHeadGpuCache {
             0,
             0,
         ];
-        let dims_buffer = ctx
+        let matmul_dims = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("dims"),
-                contents: bytemuck::cast_slice(&dims),
+                contents: bytemuck::cast_slice(&matmul_dims_values),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind_group = create_matmul_bind_group(
+        let matmul_bind_group = create_matmul_bind_group(
             ctx,
             &hidden,
             &weight,
             &logits,
-            &dims_buffer,
+            &matmul_dims,
             m as u32,
             k as u32,
             n as u32,
             Some("lm_head_matmul_bind_group"),
         );
 
+        // ------------------------------------------------------------
+        // Cross entropy:
+        // logits [seq, vocab] + targets [seq]
+        // -> d_logits [seq, vocab] + loss_per_token [seq]
+        // ------------------------------------------------------------
+
+        let targets = GpuTensor::new_u32(
+            &ctx.device,
+            vec![seq_len],
+            storage_read_from_cpu,
+            Some("cross_entropy_targets".to_owned()),
+        );
+
+        let loss_per_token = GpuTensor::new_f32(
+            &ctx.device,
+            vec![seq_len],
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            Some("cross_entropy_loss_per_token".to_owned()),
+        );
+
+        let d_logits = GpuTensor::new_f32(
+            &ctx.device,
+            vec![seq_len, vocab_size],
+            storage_rw,
+            Some("cross_entropy_d_logits".to_owned()),
+        );
+
+        let ce_dims_values = [seq_len as u32, vocab_size as u32, 0, 0];
+
+        let ce_dims = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cross_entropy_dims"),
+                contents: bytemuck::cast_slice(&ce_dims_values),
+                usage: BufferUsages::UNIFORM,
+            });
+
+        let ce_bind_group = create_cross_entropy_bind_group(
+            ctx,
+            &logits,
+            &targets,
+            &loss_per_token,
+            &d_logits,
+            &ce_dims,
+            seq_len,
+            vocab_size,
+            Some("cross_entropy_bind_group"),
+        );
+
         Self {
-            // これだけは初期化時に一度upload
             weight,
             hidden,
             logits,
-            bind_group,
-            dims: dims_buffer,
+            matmul_bind_group,
+            matmul_dims,
+            targets,
+            d_logits,
+            loss_per_token,
+            ce_dims,
+            ce_bind_group,
             seq_len,
         }
     }

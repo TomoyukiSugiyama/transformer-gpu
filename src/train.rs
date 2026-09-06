@@ -4,7 +4,8 @@ use crate::{
     checkpoint::{Checkpointable, WeightMap},
     dataset::{Dataset, Split},
     gpu_context::GpuContext,
-    kernel::{adam_w::AdamW, cross_entropy_loss::cross_entropy_loss},
+    gpu_tensor::read_f32_tensor,
+    kernel::{adam_w::AdamW, cross_entropy_loss::encode_cross_entropy_into},
     lr_scheduler::{LrScheduleKind, LrScheduler},
     model::language_model::{
         LanguageModel, LanguageModelBackward, LanguageModelForwardCache, LmHeadGpuCache,
@@ -128,9 +129,13 @@ impl Trainer {
         cache: &mut LanguageModelForwardCache,
         input_ids: &[u32],
     ) -> Option<(f32, LanguageModelBackward)> {
+        assert!(
+            input_ids.len() >= 2,
+            "input_ids must contain at least two tokens"
+        );
         let seq = input_ids.len() - 1;
         let input = &input_ids[..seq];
-        let target: Vec<usize> = input_ids[1..].iter().map(|&t| t as usize).collect();
+        let target_u32: Vec<u32> = input_ids[1..].to_vec();
 
         let lm_head_gpu = self
             .lm_head_gpu
@@ -138,9 +143,17 @@ impl Trainer {
             .expect("LmHeadGpuCache must be initialized in Trainer::run");
 
         assert_eq!(lm_head_gpu.seq_len, seq);
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("lm_head_forward_encoder"),
+            });
 
-        let logits = model.forward(ctx, cfg, input, cache, Some(lm_head_gpu));
-        let (loss, d_logits) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
+        model.encode_forward(ctx, &mut encoder, cfg, input, cache, lm_head_gpu);
+        Self::encode_cross_entropy_gpu(ctx, &mut encoder, lm_head_gpu, &target_u32, cfg.vocab_size);
+        ctx.queue.submit([encoder.finish()]);
+
+        let (loss, d_logits) = Self::read_cross_entropy_result(ctx, lm_head_gpu);
 
         if !loss.is_finite() {
             return None;
@@ -225,12 +238,26 @@ impl Trainer {
             .expect("LmHeadGpuCache must be initialized in Trainer::run");
 
         for _ in 0..self.tcfg.eval_batches {
+            let mut encoder = ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("validation_output_head_encoder"),
+                });
             let offset = rng.random_range(0..=max_off);
             let window = &val_ids[offset..offset + seq + 1];
             let input = &window[..seq];
-            let target: Vec<usize> = window[1..].iter().map(|&t| t as usize).collect();
-            let logits = model.forward(ctx, cfg, input, cache, Some(lm_head_gpu));
-            let (loss, _) = cross_entropy_loss(ctx, &logits, &target, seq, cfg.vocab_size);
+            let target_u32: Vec<u32> = window[1..].to_vec();
+            model.encode_forward(ctx, &mut encoder, cfg, input, cache, lm_head_gpu);
+            Self::encode_cross_entropy_gpu(
+                ctx,
+                &mut encoder,
+                lm_head_gpu,
+                &target_u32,
+                cfg.vocab_size,
+            );
+            ctx.queue.submit([encoder.finish()]);
+
+            let (loss, _) = Self::read_cross_entropy_result(ctx, lm_head_gpu);
             total += loss;
         }
         total / self.tcfg.eval_batches as f32
@@ -464,6 +491,36 @@ impl Trainer {
         }
 
         grads
+    }
+
+    fn encode_cross_entropy_gpu(
+        ctx: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        gpu: &LmHeadGpuCache,
+        targets: &[u32],
+        vocab_size: usize,
+    ) {
+        assert_eq!(targets.len(), gpu.seq_len);
+
+        assert_eq!(
+            gpu.logits.shape.as_slice(),
+            &[gpu.seq_len, vocab_size],
+            "GPU logits shape mismatch",
+        );
+
+        // queue.write_bufferは、同じqueueへsubmitする前なら安全
+        gpu.targets.write_u32(&ctx.queue, targets);
+
+        encode_cross_entropy_into(ctx, encoder, &gpu.ce_bind_group, gpu.seq_len, vocab_size);
+    }
+
+    fn read_cross_entropy_result(ctx: &GpuContext, gpu: &LmHeadGpuCache) -> (f32, Vec<f32>) {
+        let losses = read_f32_tensor(ctx, &gpu.loss_per_token);
+        let d_logits = read_f32_tensor(ctx, &gpu.d_logits);
+
+        let loss = losses.iter().sum::<f32>() / gpu.seq_len as f32;
+
+        (loss, d_logits)
     }
 }
 
