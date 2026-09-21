@@ -309,13 +309,8 @@ pub fn rms_norm_backward(
     let mut dgamma = vec![0.0f32; d];
     for row in 0..seq {
         let base = (row * d) as usize;
-        let rms = (x[base..base + d]
-            .iter()
-            .map(|v| v * v)
-            .sum::<f32>()
-            / d_model as f32
-            + eps)
-            .sqrt();
+        let rms =
+            (x[base..base + d].iter().map(|v| v * v).sum::<f32>() / d_model as f32 + eps).sqrt();
         let inv_rms = 1.0 / rms;
         for i in 0..d {
             dgamma[i] += dy[base + i] * x[base + i] * inv_rms;

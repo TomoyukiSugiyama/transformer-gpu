@@ -32,11 +32,43 @@ pub fn create_matmul_bind_group(
     m: u32,
     k: u32,
     n: u32,
+    trans_a: bool,
+    trans_b: bool,
     label: Option<&str>,
 ) -> wgpu::BindGroup {
-    assert_eq!(a.shape.as_slice(), &[m as usize, k as usize]);
-    assert_eq!(b.shape.as_slice(), &[k as usize, n as usize]);
-    assert_eq!(out.shape.as_slice(), &[m as usize, n as usize]);
+    let expected_a = if trans_a {
+        // logical A: [M, K]
+        // physical A: [K, M]
+        [k as usize, m as usize]
+    } else {
+        [m as usize, k as usize]
+    };
+
+    let expected_b = if trans_b {
+        // logical B: [K, N]
+        // physical B: [N, K]
+        [n as usize, k as usize]
+    } else {
+        [k as usize, n as usize]
+    };
+
+    assert_eq!(
+        a.shape.as_slice(),
+        expected_a.as_slice(),
+        "matmul A physical shape mismatch"
+    );
+
+    assert_eq!(
+        b.shape.as_slice(),
+        expected_b.as_slice(),
+        "matmul B physical shape mismatch"
+    );
+
+    assert_eq!(
+        out.shape.as_slice(),
+        &[m as usize, n as usize],
+        "matmul output shape mismatch"
+    );
 
     ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label,
@@ -325,6 +357,8 @@ mod tests {
             m as u32,
             k as u32,
             n as u32,
+            false,
+            false,
             Some("test_matmul_bind_group"),
         );
 

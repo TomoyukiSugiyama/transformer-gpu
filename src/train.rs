@@ -151,15 +151,23 @@ impl Trainer {
 
         model.encode_forward(ctx, &mut encoder, cfg, input, cache, lm_head_gpu);
         Self::encode_cross_entropy_gpu(ctx, &mut encoder, lm_head_gpu, &target_u32, cfg.vocab_size);
+
+        model.encode_lm_head_backward_gpu(ctx, &mut encoder, lm_head_gpu);
+
         ctx.queue.submit([encoder.finish()]);
 
-        let (loss, d_logits) = Self::read_cross_entropy_result(ctx, lm_head_gpu);
+        let losses = read_f32_tensor(ctx, &lm_head_gpu.loss_per_token);
+        let loss = losses.iter().sum::<f32>() / seq as f32;
+
+        let dx = read_f32_tensor(ctx, &lm_head_gpu.d_hidden);
+        let d_lm_head = read_f32_tensor(ctx, &lm_head_gpu.d_weight);
 
         if !loss.is_finite() {
             return None;
         }
 
-        let grads = model.backward(ctx, cfg, &d_logits, cache);
+        let grads = model.backward_from_lm_head(ctx, cfg, &dx, d_lm_head, cache);
+
         Some((loss, grads))
     }
 

@@ -387,6 +387,75 @@ impl LanguageModel {
         }
     }
 
+    pub fn backward_from_lm_head(
+        &self,
+        ctx: &GpuContext,
+        cfg: &ModelConfig,
+        d_hidden: &[f32],
+        d_lm_head: Vec<f32>,
+        cache: &mut LanguageModelForwardCache,
+    ) -> LanguageModelBackward {
+        let seq = cache.token_ids.len();
+
+        assert!(seq > 0);
+
+        assert_eq!(cache.x0.len(), seq * cfg.d_model, "cache.x0 shape mismatch");
+
+        assert_eq!(
+            cache.final_norm_in.len(),
+            seq * cfg.d_model,
+            "cache.final_norm_in shape mismatch"
+        );
+
+        assert_eq!(
+            cache.final_norm_out.len(),
+            seq * cfg.d_model,
+            "cache.final_norm_out shape mismatch"
+        );
+
+        assert_eq!(
+            cache.blocks.len(),
+            cfg.n_layers,
+            "cache layer count mismatch"
+        );
+        let (cos_table, sin_table) = create_table(cfg.d_head(), cfg.max_seq_len, cfg.rope_base);
+
+        let (mut dx, d_final_gamma) = rms_norm_backward(
+            &ctx,
+            &d_hidden,
+            &cache.final_norm_in,
+            &self.final_gamma,
+            cfg.eps,
+            cfg.d_model as u32,
+        );
+
+        let mut d_blocks = Vec::with_capacity(cfg.n_layers as usize);
+        for i in (0..cfg.n_layers).rev() {
+            let backward = self.blocks[i].backward(
+                &ctx,
+                cfg,
+                &dx,
+                &cos_table,
+                &sin_table,
+                &mut cache.blocks[i],
+            );
+            dx = backward.dx.clone();
+            d_blocks.push(backward);
+        }
+        d_blocks.reverse();
+
+        let d_embedding =
+            embedding_backward(&ctx, &dx, &cache.token_ids, cfg.vocab_size, cfg.d_model);
+
+        LanguageModelBackward {
+            dx,
+            d_embedding,
+            d_blocks,
+            d_final_gamma,
+            d_lm_head,
+        }
+    }
+
     pub fn encode_lm_head_forward_gpu(
         &self,
         ctx: &GpuContext,
@@ -431,6 +500,31 @@ impl LanguageModel {
 
         // TODO: 次の段階でここを消してcross entropyへ直接つなぐ。
         read_f32_tensor(ctx, &gpu.logits)
+    }
+
+    pub fn encode_lm_head_backward_gpu(
+        &self,
+        ctx: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        gpu: &LmHeadGpuCache,
+    ) {
+        // d_hidden = d_logits × weight^T
+        encode_matmul_into(
+            ctx,
+            encoder,
+            &gpu.d_hidden_bind_group,
+            gpu.seq_len as u32,
+            gpu.hidden.shape[1] as u32,
+        );
+
+        // d_weight = hidden^T × d_logits
+        encode_matmul_into(
+            ctx,
+            encoder,
+            &gpu.d_weight_bind_group,
+            gpu.weight.shape[0] as u32,
+            gpu.weight.shape[1] as u32,
+        );
     }
 
     #[cfg(test)]
@@ -581,6 +675,16 @@ pub struct LmHeadGpuCache {
     pub ce_dims: wgpu::Buffer,
     pub ce_bind_group: wgpu::BindGroup,
     pub seq_len: usize,
+
+    // lm_head backward
+    pub d_hidden: GpuTensor, // [seq_len, d_model], dH
+    pub d_hidden_bind_group: wgpu::BindGroup,
+    pub d_hidden_dims: wgpu::Buffer,
+
+    // d_weight = H^T × d_logits
+    pub d_weight: GpuTensor, // [d_model, vocab_size], dW
+    pub d_weight_bind_group: wgpu::BindGroup,
+    pub d_weight_dims: wgpu::Buffer,
 }
 
 impl LmHeadGpuCache {
@@ -667,6 +771,8 @@ impl LmHeadGpuCache {
             m as u32,
             k as u32,
             n as u32,
+            false,
+            false,
             Some("lm_head_matmul_bind_group"),
         );
 
@@ -719,6 +825,92 @@ impl LmHeadGpuCache {
             Some("cross_entropy_bind_group"),
         );
 
+        // ------------------------------------------------------------
+        // d_lm_head d_hidden: d_logits [seq, vocab] @ weight^T [vocab, d]
+        //                 -> d_hidden [seq, d]
+        // ------------------------------------------------------------
+
+        let d_hidden = GpuTensor::new_f32(
+            &ctx.device,
+            vec![seq_len, d_model],
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+            Some("d_lm_head_d_hidden".to_owned()),
+        );
+
+        let d_hidden_dims_values = [
+            seq_len as u32,
+            vocab_size as u32,
+            d_model as u32,
+            0, // transpose d_logits = false
+            1, // transpose weight = true
+            0,
+            0,
+            0,
+        ];
+        let d_hidden_dims = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("dims"),
+                contents: bytemuck::cast_slice(&d_hidden_dims_values),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let d_hidden_bind_group = create_matmul_bind_group(
+            ctx,
+            &d_logits,
+            &weight,
+            &d_hidden,
+            &d_hidden_dims,
+            seq_len as u32,
+            vocab_size as u32,
+            d_model as u32,
+            false,
+            true,
+            Some("d_lm_head_d_hidden_bind_group"),
+        );
+
+        // ------------------------------------------------------------
+        // d_lm_head d_weight: hidden^T [d, seq] @ d_logits [seq, vocab]
+        //                 -> d_weight [d, vocab]
+        // ------------------------------------------------------------
+
+        let d_weight = GpuTensor::new_f32(
+            &ctx.device,
+            vec![d_model, vocab_size],
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+            Some("lm_head_d_weight".to_owned()),
+        );
+
+        let d_weight_dims_values = [
+            d_model as u32,
+            seq_len as u32,
+            vocab_size as u32,
+            1, // transpose hidden = true
+            0, // transpose d_logits = false
+            0,
+            0,
+            0,
+        ];
+        let d_weight_dims = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("dims"),
+                contents: bytemuck::cast_slice(&d_weight_dims_values),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let d_weight_bind_group = create_matmul_bind_group(
+            ctx,
+            &hidden,
+            &d_logits,
+            &d_weight,
+            &d_weight_dims,
+            d_model as u32,
+            seq_len as u32,
+            vocab_size as u32,
+            true,
+            false,
+            Some("d_lm_head_d_weight_bind_group"),
+        );
+
         Self {
             weight,
             hidden,
@@ -731,6 +923,12 @@ impl LmHeadGpuCache {
             ce_dims,
             ce_bind_group,
             seq_len,
+            d_hidden,
+            d_hidden_bind_group,
+            d_hidden_dims,
+            d_weight,
+            d_weight_bind_group,
+            d_weight_dims,
         }
     }
 }
@@ -739,10 +937,15 @@ impl LmHeadGpuCache {
 mod test {
     use crate::{
         gpu_context::GpuContext,
-        kernel::cross_entropy_loss::{cross_entropy_loss, cross_entropy_loss_cpu},
+        gpu_tensor::read_f32_tensor,
+        kernel::{
+            cross_entropy_loss::{cross_entropy_loss, cross_entropy_loss_cpu},
+            matmul::matmul_backward,
+        },
         model::language_model::{LanguageModel, LanguageModelForwardCache},
         model_config::ModelConfig,
         test_utils::{assert_close, random_token_ids},
+        util::random_f32,
     };
 
     #[test]
@@ -828,5 +1031,70 @@ mod test {
         assert_close(&gpu.d_embedding, &cpu.d_embedding, 1e-4, 1e-5);
         assert_close(&gpu.d_final_gamma, &cpu.d_final_gamma, 1e-4, 1e-5);
         assert_close(&gpu.d_lm_head, &cpu.d_lm_head, 1e-4, 1e-5);
+    }
+
+    #[test]
+    fn test_lm_head_backward_gpu_matches_matmul_backward() {
+        let ctx = GpuContext::new();
+
+        let seq = 7usize;
+        let d_model = 13usize;
+        let vocab = 19usize;
+
+        let hidden_host = random_f32(seq * d_model, 100, 0.2);
+        let weight_host = random_f32(d_model * vocab, 101, 0.2);
+        let d_logits_host = random_f32(seq * vocab, 102, 0.2);
+
+        let (expected_d_hidden, expected_d_weight) = matmul_backward(
+            &ctx,
+            &d_logits_host,
+            &hidden_host,
+            &weight_host,
+            seq as u32,
+            d_model as u32,
+            vocab as u32,
+        );
+
+        let cfg = ModelConfig {
+            vocab_size: vocab,
+            d_model,
+            n_heads: 1,
+            n_kv_heads: 1,
+            d_ff: 16,
+            n_layers: 1,
+            max_seq_len: seq,
+            ..Default::default()
+        };
+
+        let mut model = LanguageModel::new(&cfg);
+
+        // 乱数をテストの明示的なweightに置換
+        model.lm_head.copy_from_slice(&weight_host);
+
+        let gpu = super::LmHeadGpuCache::new(&ctx, &weight_host, seq, d_model, vocab);
+
+        // d_weight計算で使う forward input H
+        gpu.hidden.write_f32(&ctx.queue, &hidden_host);
+
+        // d_hidden計算で使う dL
+        gpu.d_logits.write_f32(&ctx.queue, &d_logits_host);
+
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("test_lm_head_backward_encoder"),
+            });
+
+        model.encode_lm_head_backward_gpu(&ctx, &mut encoder, &gpu);
+
+        ctx.queue.submit([encoder.finish()]);
+
+        let actual_d_hidden = read_f32_tensor(&ctx, &gpu.d_hidden);
+
+        let actual_d_weight = read_f32_tensor(&ctx, &gpu.d_weight);
+
+        assert_close(&actual_d_hidden, &expected_d_hidden, 1e-4, 1e-5);
+
+        assert_close(&actual_d_weight, &expected_d_weight, 1e-4, 1e-5);
     }
 }

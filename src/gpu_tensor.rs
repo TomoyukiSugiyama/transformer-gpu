@@ -46,14 +46,14 @@ impl GpuTensor {
         let shape = shape.into();
         let len = Self::numel(&shape);
         let label = label.into();
-    
+
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: label.as_deref(),
             size: (len * dtype.byte_size()) as u64,
             usage,
             mapped_at_creation: false,
         });
-    
+
         Self {
             buffer,
             shape,

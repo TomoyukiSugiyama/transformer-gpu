@@ -357,7 +357,6 @@ pub fn embedding_backward_cpu(
         return vec![0.0; vocab_size * d_model];
     }
 
-
     let scale = (d_model as f32).sqrt();
     let mut dweight = vec![0.0f32; vocab_size * d_model];
 
