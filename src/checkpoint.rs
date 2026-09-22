@@ -61,6 +61,10 @@ impl WeightMap {
         })
     }
 
+    pub fn find_vector(&self, key: &str) -> Option<&Vector> {
+        self.vectors.get(key)
+    }
+
     pub fn get_matrix(&self, key: &str) -> io::Result<&Matrix> {
         self.matrices.get(key).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, format!("missing matrix: {key}"))

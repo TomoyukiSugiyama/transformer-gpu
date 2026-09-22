@@ -1,4 +1,7 @@
-use std::{io::Write, time::Instant};
+use std::{
+    io::{self, Write},
+    time::Instant,
+};
 
 use crate::{
     checkpoint::{Checkpointable, WeightMap},
@@ -18,6 +21,9 @@ use crate::{
 };
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
+
+const CKPT_LM_HEAD_ADAM_M: &str = "optimizer.lm_head.adam_m";
+const CKPT_LM_HEAD_ADAM_V: &str = "optimizer.lm_head.adam_v";
 
 pub struct TrainConfig {
     pub batch_size: usize,
@@ -331,12 +337,19 @@ impl Trainer {
         let mut ema_loss: Option<f32> = None;
         let mut start_step = 1usize;
         let mut best_val = f32::INFINITY;
+
+        let mut resume_map: Option<WeightMap> = None;
+
         if let Some(path) = resume_ckpt {
             let map = WeightMap::load(path).unwrap();
+
             cfg.from_weight_map(&map.scoped("meta.model")).unwrap();
             model.from_weight_map(&map).unwrap();
             self.opt.from_weight_map(&map.scoped("optimizer")).unwrap();
-            start_step = map.get_scalar("meta.step").unwrap_or(1) as usize;
+
+            let saved_step = map.get_scalar("meta.step").unwrap_or(0) as usize;
+            start_step = saved_step + 1;
+
             best_val = map
                 .get_scalar("meta.best_val")
                 .map(|v| f32::from_bits(v as u32))
@@ -345,16 +358,31 @@ impl Trainer {
             // Consume RNG to synchronize
             let max_offset_train = dataset.train.len() - self.tcfg.seq_len - 1;
             let max_offset_val = dataset.val.len() - self.tcfg.seq_len - 1;
+
             for step in 1..start_step {
                 let _ = rng.random_range(0..=max_offset_train);
+
                 if step % self.tcfg.eval_interval == 0 {
                     let _ = rng.random_range(0..=max_offset_val);
                 }
             }
+
             println!("# resume from checkpoint: {}", path);
+
+            resume_map = Some(map);
         }
 
         self.ensure_lm_head_gpu(ctx, model, cfg, self.tcfg.seq_len);
+
+        if let Some(map) = resume_map.as_ref() {
+            let gpu = self
+                .lm_head_gpu
+                .as_ref()
+                .expect("LmHeadGpuCache must be initialized after ensure_lm_head_gpu");
+
+            restore_lm_head_gpu_adamw_state(ctx, gpu, map)
+                .expect("failed to restore GPU lm_head AdamW state from checkpoint");
+        }
 
         let lr_scheduler = LrScheduler::with_kind(
             self.tcfg.lr_max,
@@ -482,15 +510,25 @@ impl Trainer {
                 );
                 if vl < best_val {
                     best_val = vl;
-                    {
+                    let (lm_head_weight, lm_head_adam_m, lm_head_adam_v) = {
                         let gpu = self
                             .lm_head_gpu
                             .as_ref()
                             .expect("LmHeadGpuCache must be initialized");
 
-                        model.lm_head = read_f32_tensor(ctx, &gpu.weight);
-                    }
+                        (
+                            read_f32_tensor(ctx, &gpu.weight),
+                            read_f32_tensor(ctx, &gpu.lm_head_adam_m),
+                            read_f32_tensor(ctx, &gpu.lm_head_adam_v),
+                        )
+                    };
+
+                    model.lm_head = lm_head_weight;
                     let mut map = model.to_weight_map();
+
+                    map.insert_vector(CKPT_LM_HEAD_ADAM_M, lm_head_adam_m);
+                    map.insert_vector(CKPT_LM_HEAD_ADAM_V, lm_head_adam_v);
+
                     map.insert_scalar("meta.step", step as u64);
                     map.insert_scalar("meta.best_val", best_val.to_bits() as u64);
                     map.merge("meta.model", cfg.to_weight_map());
@@ -586,6 +624,66 @@ impl Trainer {
 
         (loss, d_logits)
     }
+}
+
+fn restore_lm_head_gpu_adamw_state(
+    ctx: &GpuContext,
+    gpu: &LmHeadGpuCache,
+    map: &WeightMap,
+) -> io::Result<()> {
+    let saved_m = map.find_vector(CKPT_LM_HEAD_ADAM_M);
+    let saved_v = map.find_vector(CKPT_LM_HEAD_ADAM_V);
+
+    match (saved_m, saved_v) {
+        (Some(saved_m), Some(saved_v)) => {
+            if saved_m.len() != gpu.lm_head_adam_m.len {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "checkpoint lm_head AdamW m has wrong length: got {}, expected {}",
+                        saved_m.len(),
+                        gpu.lm_head_adam_m.len,
+                    ),
+                ));
+            }
+
+            if saved_v.len() != gpu.lm_head_adam_v.len {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "checkpoint lm_head AdamW v has wrong length: got {}, expected {}",
+                        saved_v.len(),
+                        gpu.lm_head_adam_v.len,
+                    ),
+                ));
+            }
+
+            gpu.lm_head_adam_m.write_f32(&ctx.queue, saved_m);
+            gpu.lm_head_adam_v.write_f32(&ctx.queue, saved_v);
+        }
+
+        // GPU AdamW導入前のcheckpoint。
+        // LmHeadGpuCache::new()でm/vをゼロ初期化済みなので何もしない。
+        (None, None) => {
+            eprintln!(
+                "checkpoint has no GPU lm_head AdamW state; \
+                 using zero-initialized lm_head AdamW m/v"
+            );
+        }
+
+        // m/vの片方だけあるcheckpointは正常なcheckpointではない。
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "checkpoint has incomplete GPU lm_head AdamW state; \
+                     both {CKPT_LM_HEAD_ADAM_M} and {CKPT_LM_HEAD_ADAM_V} are required"
+                ),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
