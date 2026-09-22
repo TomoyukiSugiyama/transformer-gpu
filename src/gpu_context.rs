@@ -8,10 +8,11 @@ pub struct GpuContext {
     // pub rope_pipeline: wgpu::ComputePipeline,
     // pub attention_pipeline: wgpu::ComputePipeline,
     // pub swiglu_pipeline: wgpu::ComputePipeline,
-    // pub adamw_pipeline: wgpu::ComputePipeline,
     pub cross_entropy_bind_group_layout: wgpu::BindGroupLayout,
     pub cross_entropy_pipeline: wgpu::ComputePipeline,
     // pub dims_buffer: wgpu::Buffer,
+    pub adamw_bind_group_layout: wgpu::BindGroupLayout,
+    pub adamw_pipeline: wgpu::ComputePipeline,
 }
 
 impl GpuContext {
@@ -163,6 +164,78 @@ impl GpuContext {
                 cache: None,
             });
 
+        let adamw_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("adamw_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let adamw_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("adamw_pipeline_layout"),
+                bind_group_layouts: &[Some(&adamw_bind_group_layout)],
+                immediate_size: 0,
+            });
+        let adamw_shader = device.create_shader_module(wgpu::include_wgsl!("shader/adam_w.wgsl"));
+        let adamw_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("adamw_pipeline"),
+            layout: Some(&adamw_pipeline_layout),
+            module: &adamw_shader,
+            entry_point: Some("adamw_step"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         Self {
             device,
             queue,
@@ -170,6 +243,8 @@ impl GpuContext {
             matmul_pipeline,
             cross_entropy_bind_group_layout,
             cross_entropy_pipeline,
+            adamw_bind_group_layout,
+            adamw_pipeline,
         }
     }
 }

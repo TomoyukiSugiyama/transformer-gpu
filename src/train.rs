@@ -5,7 +5,10 @@ use crate::{
     dataset::{Dataset, Split},
     gpu_context::GpuContext,
     gpu_tensor::read_f32_tensor,
-    kernel::{adam_w::AdamW, cross_entropy_loss::encode_cross_entropy_into},
+    kernel::{
+        adam_w::{AdamW, AdamWParams, encode_adamw_step},
+        cross_entropy_loss::encode_cross_entropy_into,
+    },
     lr_scheduler::{LrScheduleKind, LrScheduler},
     model::language_model::{
         LanguageModel, LanguageModelBackward, LanguageModelForwardCache, LmHeadGpuCache,
@@ -185,8 +188,10 @@ impl Trainer {
             .step("embedding", &mut model.embedding, &grads.d_embedding);
         self.opt
             .step("final_gamma", &mut model.final_gamma, &grads.d_final_gamma);
-        self.opt
-            .step("lm_head", &mut model.lm_head, &grads.d_lm_head);
+
+        // lm_headはGPU AdamWが更新する。
+        // self.opt
+        //     .step("lm_head", &mut model.lm_head, &grads.d_lm_head);
 
         for (i, (block, bwd)) in model
             .blocks
@@ -216,11 +221,54 @@ impl Trainer {
                 .step(&format!("b{i}.w_down"), &mut block.ffn.w_down, &fb.dw_down);
         }
 
-        self.lm_head_gpu
-            .as_ref()
-            .expect("LmHeadGpuCache must be initialized in Trainer::run")
-            .weight
-            .write_f32(&ctx.queue, &model.lm_head);
+        // self.lm_head_gpu
+        //     .as_ref()
+        //     .expect("LmHeadGpuCache must be initialized in Trainer::run")
+        //     .weight
+        //     .write_f32(&ctx.queue, &model.lm_head);
+        // CPU lm_head -> GPU weightの毎step uploadは削除する
+        // gpu.weight.write_f32(&ctx.queue, &model.lm_head);
+
+        // 代わりにGPU上のd_weight, weight, m, vにAdamWを記録する
+        let gpu = self
+            .lm_head_gpu
+            .as_mut()
+            .expect("LmHeadGpuCache must be initialized");
+
+        let params = AdamWParams {
+            len: gpu.weight.len as u32,
+            step: self.opt.step_count() as u32,
+            pad0: 0,
+            pad1: 0,
+
+            beta1: self.opt.beta1(),
+            beta2: self.opt.beta2(),
+            lr,
+            eps: self.opt.eps(),
+
+            weight_decay: self.opt.weight_decay(),
+            pad2: 0.0,
+            pad3: 0.0,
+            pad4: 0.0,
+        };
+
+        ctx.queue
+            .write_buffer(&gpu.adamw_params, 0, bytemuck::bytes_of(&params));
+
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("lm_head_adamw_encoder"),
+            });
+
+        encode_adamw_step(
+            ctx,
+            &mut encoder,
+            &gpu.adamw_bind_group,
+            gpu.weight.len as u32,
+        );
+
+        ctx.queue.submit([encoder.finish()]);
     }
 
     pub fn compute_val_loss(
@@ -434,6 +482,14 @@ impl Trainer {
                 );
                 if vl < best_val {
                     best_val = vl;
+                    {
+                        let gpu = self
+                            .lm_head_gpu
+                            .as_ref()
+                            .expect("LmHeadGpuCache must be initialized");
+
+                        model.lm_head = read_f32_tensor(ctx, &gpu.weight);
+                    }
                     let mut map = model.to_weight_map();
                     map.insert_scalar("meta.step", step as u64);
                     map.insert_scalar("meta.best_val", best_val.to_bits() as u64);

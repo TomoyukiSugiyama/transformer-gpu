@@ -5,6 +5,7 @@ use crate::{
     gpu_context::GpuContext,
     gpu_tensor::{GpuTensor, read_f32_tensor},
     kernel::{
+        adam_w::{AdamWParams, create_adamw_bind_group},
         cross_entropy_loss::create_cross_entropy_bind_group,
         embedding::{embedding, embedding_backward},
         matmul::{create_matmul_bind_group, encode_matmul_into, matmul_backward, matmul_forward},
@@ -685,6 +686,12 @@ pub struct LmHeadGpuCache {
     pub d_weight: GpuTensor, // [d_model, vocab_size], dW
     pub d_weight_bind_group: wgpu::BindGroup,
     pub d_weight_dims: wgpu::Buffer,
+
+    // adam w params
+    pub lm_head_adam_m: GpuTensor,
+    pub lm_head_adam_v: GpuTensor,
+    pub adamw_bind_group: wgpu::BindGroup,
+    pub adamw_params: wgpu::Buffer,
 }
 
 impl LmHeadGpuCache {
@@ -911,6 +918,65 @@ impl LmHeadGpuCache {
             Some("d_lm_head_d_weight_bind_group"),
         );
 
+        // ------------------------------------------------------------
+        // adamw
+        // ------------------------------------------------------------
+        let lm_head_adam_m = GpuTensor::new_f32(
+            &ctx.device,
+            vec![d_model, vocab_size],
+            wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            Some("lm_head_adam_m".to_owned()),
+        );
+
+        let lm_head_adam_v = GpuTensor::new_f32(
+            &ctx.device,
+            vec![d_model, vocab_size],
+            wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            Some("lm_head_adam_v".to_owned()),
+        );
+
+        let zeros = vec![0.0_f32; d_model * vocab_size];
+        lm_head_adam_m.write_f32(&ctx.queue, &zeros);
+        lm_head_adam_v.write_f32(&ctx.queue, &zeros);
+
+        let initial_params = AdamWParams {
+            len: (d_model * vocab_size) as u32,
+            step: 1,
+            pad0: 0,
+            pad1: 0,
+
+            beta1: 0.9,
+            beta2: 0.999,
+            lr: 0.0,
+            eps: 1e-8,
+
+            weight_decay: 0.0,
+            pad2: 0.0,
+            pad3: 0.0,
+            pad4: 0.0,
+        };
+        let adamw_params = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("adamw_params"),
+                contents: bytemuck::bytes_of(&initial_params),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let adamw_bind_group = create_adamw_bind_group(
+            ctx,
+            &d_weight,
+            &weight,
+            &lm_head_adam_m,
+            &lm_head_adam_v,
+            &adamw_params,
+            Some("adamw_bind_group"),
+        );
+
         Self {
             weight,
             hidden,
@@ -929,6 +995,10 @@ impl LmHeadGpuCache {
             d_weight,
             d_weight_bind_group,
             d_weight_dims,
+            lm_head_adam_m,
+            lm_head_adam_v,
+            adamw_bind_group,
+            adamw_params,
         }
     }
 }
